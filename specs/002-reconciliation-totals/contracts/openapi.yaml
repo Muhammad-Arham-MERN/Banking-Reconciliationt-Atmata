@@ -1,0 +1,77 @@
+# OpenAPI Spec: Reconciliation Totals Extension
+
+```yaml
+openapi: 3.0.3
+info:
+  title: Bank Reconciliation System - Totals Extension
+  version: "1.1.0"
+  description: |
+    Extends the existing /karwai endpoint with bank_net_total and company_net_total fields.
+
+paths:
+  /karwai:
+    post:
+      summary: Process bank reconciliation with totals
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                aggregatedTotalColumn:
+                  type: string
+                  description: Column name in XLSX containing the Aggregated Total values
+                  example: "Aggregated Total"
+      responses:
+        "200":
+          description: Successful reconciliation with totals
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReconciliationTotalsResponse"
+
+components:
+  schemas:
+    NetTotalValue:
+      type: object
+      properties:
+        value:
+          type: number
+          nullable: true
+          description: The extracted value, or null if unavailable
+          example: 1250000.50
+        status:
+          type: string
+          enum: [found, missing, invalid]
+          description: Status of the extraction
+          example: found
+
+    ReconciliationTotalsResponse:
+      allOf:
+        - $ref: "#/components/schemas/ReconciliationResult"
+        - type: object
+          properties:
+            bank_net_total:
+              $ref: "#/components/schemas/NetTotalValue"
+            company_net_total:
+              $ref: "#/components/schemas/NetTotalValue"
+
+    ReconciliationResult:
+      type: object
+      properties:
+        request_id:
+          type: string
+        processing_status:
+          type: string
+        processing_timestamp:
+          type: string
+        summary:
+          type: object
+        results:
+          type: object
+        errors:
+          type: array
+        message:
+          type: string
+```

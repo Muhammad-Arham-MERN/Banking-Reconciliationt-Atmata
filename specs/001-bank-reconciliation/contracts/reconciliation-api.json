@@ -1,0 +1,385 @@
+{
+  "openapi": "3.0.0",
+  "info": {
+    "title": "Bank Reconciliation API",
+    "description": "API for bank statement and company records reconciliation",
+    "version": "1.0.0",
+    "contact": {
+      "name": "Muhammad Arham",
+      "project": "Banking Reconciliation System"
+    }
+  },
+  "servers": [
+    {
+      "url": "http://localhost:8000",
+      "description": "Local development server"
+    }
+  ],
+  "paths": {
+    "/karwai": {
+      "post": {
+        "summary": "Process bank statement and company records for reconciliation",
+        "description": "Uploads and processes PDF bank statement and Excel company records, performs reconciliation, and returns discrepancy results",
+        "operationId": "processReconciliation",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "required": ["bank_statement", "company_records"],
+                "properties": {
+                  "bank_statement": {
+                    "type": "string",
+                    "format": "binary",
+                    "description": "Bank statement PDF file"
+                  },
+                  "company_records": {
+                    "type": "string",
+                    "format": "binary",
+                    "description": "Company records Excel file"
+                  },
+                  "sheetName": {
+                    "type": "string",
+                    "description": "Optional Excel sheet name for company records",
+                    "default": "Sheet1"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful processing with reconciliation results",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReconciliationResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request - invalid file format or validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error - processing failure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/health": {
+      "get": {
+        "summary": "Health check endpoint",
+        "description": "Check API server health status",
+        "operationId": "healthCheck",
+        "responses": {
+          "200": {
+            "description": "Server is healthy",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "example": "healthy"
+                    },
+                    "timestamp": {
+                      "type": "string",
+                      "format": "date-time"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "BankTransaction": {
+        "type": "object",
+        "description": "Individual transaction from bank statement",
+        "required": ["Transaction_date", "Transaction Detail", "Debit/Credit"],
+        "properties": {
+          "Transaction_date": {
+            "type": "string",
+            "format": "date",
+            "description": "Transaction date in YYYY-MM-DD format",
+            "example": "2026-05-05"
+          },
+          "Transaction Detail": {
+            "type": "string",
+            "description": "Transaction description",
+            "example": "INWARD CHEQUE"
+          },
+          "Debit/Credit": {
+            "type": "number",
+            "format": "float",
+            "description": "Transaction amount with sign (positive for credit, negative for debit)",
+            "example": 10200.0
+          }
+        }
+      },
+      "CompanyTransaction": {
+        "type": "object",
+        "description": "Individual transaction from company records",
+        "required": ["Transaction_date", "Transaction Detail", "Debit/Credit"],
+        "properties": {
+          "Transaction_date": {
+            "type": "string",
+            "format": "date",
+            "description": "Transaction date in YYYY-MM-DD format",
+            "example": "2026-05-04"
+          },
+          "Transaction Detail": {
+            "type": "string",
+            "description": "Transaction description",
+            "example": "Fund Transfer Through RTGS from SBL to MCB BANK ISB"
+          },
+          "Debit/Credit": {
+            "type": "number",
+            "format": "float",
+            "description": "Transaction amount with sign (positive for credit, negative for debit)",
+            "example": 22000000.0
+          }
+        }
+      },
+      "DiscrepancyTransaction": {
+        "type": "object",
+        "description": "Transaction present in one source but not the other",
+        "required": ["Transaction_date", "Transaction Detail", "Debit/Credit", "FROM"],
+        "properties": {
+          "Transaction_date": {
+            "type": "string",
+            "format": "date",
+            "description": "Transaction date in YYYY-MM-DD format",
+            "example": "2026-05-06"
+          },
+          "Transaction Detail": {
+            "type": "string",
+            "description": "Transaction description",
+            "example": "Payment Suzuki Azim Motors WHT 5.515"
+          },
+          "Debit/Credit": {
+            "type": "number",
+            "format": "float",
+            "description": "Transaction amount with sign (positive for credit, negative for debit)",
+            "example": -40771.695
+          },
+          "FROM": {
+            "type": "string",
+            "description": "Source of this discrepancy",
+            "enum": ["Bank", "Company"],
+            "example": "Bank"
+          }
+        }
+      },
+      "ReconciliationSummary": {
+        "type": "object",
+        "description": "Summary statistics for reconciliation process",
+        "required": [
+          "total_bank_transactions",
+          "total_company_transactions",
+          "total_discrepancies",
+          "bank_only_discrepancies",
+          "company_only_discrepancies",
+          "opposite_pairs_removed",
+          "processing_duration_ms",
+          "pdf_processing_time_ms",
+          "excel_processing_time_ms",
+          "concurrent_processing"
+        ],
+        "properties": {
+          "total_bank_transactions": {
+            "type": "integer",
+            "description": "Total number of transactions in bank statement",
+            "example": 26
+          },
+          "total_company_transactions": {
+            "type": "integer",
+            "description": "Total number of transactions in company records",
+            "example": 20
+          },
+          "total_discrepancies": {
+            "type": "integer",
+            "description": "Total number of discrepancies found",
+            "example": 15
+          },
+          "bank_only_discrepancies": {
+            "type": "integer",
+            "description": "Number of discrepancies only in bank statement",
+            "example": 8
+          },
+          "company_only_discrepancies": {
+            "type": "integer",
+            "description": "Number of discrepancies only in company records",
+            "example": 7
+          },
+          "opposite_pairs_removed": {
+            "type": "integer",
+            "description": "Number of opposite sign pairs removed from discrepancy list",
+            "example": 4
+          },
+          "processing_duration_ms": {
+            "type": "integer",
+            "description": "Total processing time in milliseconds",
+            "example": 7153
+          },
+          "pdf_processing_time_ms": {
+            "type": "integer",
+            "description": "PDF processing time in milliseconds",
+            "example": 7151
+          },
+          "excel_processing_time_ms": {
+            "type": "integer",
+            "description": "Excel processing time in milliseconds",
+            "example": 191
+          },
+          "concurrent_processing": {
+            "type": "boolean",
+            "description": "Whether PDF and Excel were processed concurrently",
+            "example": true
+          }
+        }
+      },
+      "ReconciliationResults": {
+        "type": "object",
+        "description": "Results object containing all transaction lists",
+        "required": ["bank_statement", "company_records", "discrepancies"],
+        "properties": {
+          "bank_statement": {
+            "type": "array",
+            "description": "List of all bank transactions",
+            "items": {
+              "$ref": "#/components/schemas/BankTransaction"
+            }
+          },
+          "company_records": {
+            "type": "array",
+            "description": "List of all company transactions",
+            "items": {
+              "$ref": "#/components/schemas/CompanyTransaction"
+            }
+          },
+          "discrepancies": {
+            "type": "array",
+            "description": "Unified list of discrepancies with source attribution",
+            "items": {
+              "$ref": "#/components/schemas/DiscrepancyTransaction"
+            }
+          }
+        }
+      },
+      "ReconciliationResponse": {
+        "type": "object",
+        "description": "Complete reconciliation response",
+        "required": ["request_id", "processing_status", "processing_timestamp", "summary", "results", "errors", "message"],
+        "properties": {
+          "request_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Unique request identifier",
+            "example": "f5af9205-7b5b-4ffb-8f56-95cbe292c09e"
+          },
+          "processing_status": {
+            "type": "string",
+            "description": "Processing status",
+            "enum": ["completed", "partial", "error"],
+            "example": "completed"
+          },
+          "processing_timestamp": {
+            "type": "string",
+            "format": "date-time",
+            "description": "ISO 8601 timestamp of processing completion",
+            "example": "2026-06-23T03:20:03.251969Z"
+          },
+          "summary": {
+            "$ref": "#/components/schemas/ReconciliationSummary"
+          },
+          "results": {
+            "$ref": "#/components/schemas/ReconciliationResults"
+          },
+          "errors": {
+            "type": "array",
+            "description": "List of error messages (empty if successful)",
+            "items": {
+              "type": "string"
+            },
+            "example": []
+          },
+          "message": {
+            "type": "string",
+            "description": "User-friendly status message",
+            "example": "Reconciliation complete - Found 15 discrepancies"
+          }
+        }
+      },
+      "ErrorResponse": {
+        "type": "object",
+        "description": "Error response for failed requests",
+        "required": ["request_id", "processing_status", "processing_timestamp", "message"],
+        "properties": {
+          "request_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Unique request identifier",
+            "example": "error-uuid-1234"
+          },
+          "processing_status": {
+            "type": "string",
+            "description": "Processing status",
+            "enum": ["error"],
+            "example": "error"
+          },
+          "processing_timestamp": {
+            "type": "string",
+            "format": "date-time",
+            "description": "ISO 8601 timestamp",
+            "example": "2026-06-23T03:20:03.251969Z"
+          },
+          "message": {
+            "type": "string",
+            "description": "Error message",
+            "example": "Failed to process bank statement: Invalid PDF format"
+          },
+          "errors": {
+            "type": "array",
+            "description": "Detailed error messages",
+            "items": {
+              "type": "string"
+            },
+            "example": ["Invalid PDF format", "File size exceeds limit"]
+          }
+        }
+      }
+    },
+    "securitySchemes": {
+      "ApiKeyAuth": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-API-Key",
+        "description": "API key for authentication (future implementation)"
+      }
+    }
+  },
+  "security": []
+}

@@ -45,6 +45,7 @@ export type FormatType = 'debit-plus-credit' | 'debit-pipe-credit';
 export interface ColumnMappingConfiguration {
   formatType: FormatType; // Selected format type
   sheetName: string; // Excel worksheet name
+  aggregatedTotalColumn?: string; // Optional Aggregated Total column name
 
   // Fields for debit+credit format (3 fields)
   debitPlusCreditFields?: {

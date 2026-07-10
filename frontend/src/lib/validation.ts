@@ -211,6 +211,7 @@ export function preserveCommonFields(
     return {
       formatType: newFormatType,
       sheetName: currentConfig.sheetName ?? 'Sheet1',
+      aggregatedTotalColumn: currentConfig.aggregatedTotalColumn ?? '',
       debitPlusCreditFields: {
         transactionDateColumn: commonDateColumn,
         debitPlusCreditColumn: '',
@@ -222,6 +223,7 @@ export function preserveCommonFields(
     return {
       formatType: newFormatType,
       sheetName: currentConfig.sheetName ?? 'Sheet1',
+      aggregatedTotalColumn: currentConfig.aggregatedTotalColumn ?? '',
       debitPipeCreditFields: {
         transactionDateColumn: commonDateColumn,
         debitColumn: '',

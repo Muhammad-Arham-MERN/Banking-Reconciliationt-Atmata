@@ -1,0 +1,43 @@
+{
+  "endpoint": "GET /history/list",
+  "description": "List all saved SQLite history files in the Reconciliation History directory",
+  "request": {
+    "contentType": "none",
+    "params": {}
+  },
+  "responses": {
+    "200": {
+      "description": "List of history files found",
+      "body": {
+        "type": "object",
+        "properties": {
+          "files": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["file_name", "file_path", "created_at", "entry_count"],
+              "properties": {
+                "file_name": { "type": "string", "example": "2026-07-03_14-30-00.sqlite" },
+                "file_path": { "type": "string", "example": "Reconciliation History/2026-07-03_14-30-00.sqlite" },
+                "created_at": { "type": "string", "format": "date-time" },
+                "entry_count": { "type": "integer" }
+              }
+            }
+          },
+          "total": { "type": "integer" }
+        }
+      }
+    },
+    "200_empty": {
+      "description": "No history files exist or directory is empty",
+      "body": {
+        "type": "object",
+        "properties": {
+          "files": { "type": "array", "items": {}, "example": [] },
+          "total": { "type": "integer", "example": 0 },
+          "message": { "type": "string", "example": "No reconciliation history found." }
+        }
+      }
+    }
+  }
+}

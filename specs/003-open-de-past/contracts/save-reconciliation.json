@@ -1,0 +1,85 @@
+{
+  "endpoint": "POST /history/save",
+  "description": "Save completed reconciliation discrepancies to a new SQLite history file",
+  "request": {
+    "contentType": "application/json",
+    "body": {
+      "type": "object",
+      "required": ["discrepancies"],
+      "properties": {
+        "custom_name": {
+          "type": "string",
+          "description": "Optional user-provided name. If omitted, server auto-generates from current date-time.",
+          "example": "july-2026-recon"
+        },
+        "discrepancies": {
+          "type": "array",
+          "description": "All discrepancy entries currently displayed on screen (including manual adjustments)",
+          "items": {
+            "type": "object",
+            "required": ["category", "transaction_details", "transaction_date", "debit_credit_amount"],
+            "properties": {
+              "category": {
+                "type": "string",
+                "enum": [
+                  "Unpresented Checks",
+                  "Uncleared Checks",
+                  "Bank Debited But not Credited in Cashbook",
+                  "Bank Credited But not Debited in Cashbook"
+                ]
+              },
+              "transaction_details": { "type": "string" },
+              "transaction_date": { "type": "string", "format": "date" },
+              "debit_credit_amount": { "type": "number" }
+            }
+          }
+        }
+      }
+    }
+  },
+  "responses": {
+    "201": {
+      "description": "History file saved successfully",
+      "body": {
+        "type": "object",
+        "properties": {
+          "status": { "type": "string", "enum": ["saved"] },
+          "file_name": { "type": "string", "example": "2026-07-03_14-30-00.sqlite" },
+          "entry_count": { "type": "integer" },
+          "message": { "type": "string" }
+        }
+      }
+    },
+    "409": {
+      "description": "File name collision (user-provided name already exists)",
+      "body": {
+        "type": "object",
+        "properties": {
+          "error": { "type": "string", "enum": ["name_collision"] },
+          "message": { "type": "string", "example": "A file with that name already exists. Please choose a different name." }
+        }
+      }
+    },
+    "422": {
+      "description": "Validation error (empty discrepancies, invalid data)",
+      "body": {
+        "type": "object",
+        "properties": {
+          "error": { "type": "string", "enum": ["validation_error"] },
+          "message": { "type": "string" },
+          "details": { "type": "object" }
+        }
+      }
+    },
+    "500": {
+      "description": "Server error (disk full, permissions, etc.)",
+      "body": {
+        "type": "object",
+        "properties": {
+          "error": { "type": "string", "enum": ["save_failed"] },
+          "message": { "type": "string" }
+        }
+      }
+    }
+  }
+}

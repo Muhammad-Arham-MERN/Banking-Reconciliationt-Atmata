@@ -28,6 +28,27 @@ from src.utils.error_handlers import (
     handle_pdf_processing_error, handle_excel_processing_error,
     create_partial_success_response
 )
+from src.services.history_service import HistoryService
+from pydantic import BaseModel
+
+
+class HistoryEntryItem(BaseModel):
+    """A single discrepancy entry for history save/load"""
+    category: str
+    transaction_details: str
+    transaction_date: str
+    debit_credit_amount: float
+
+
+class SaveHistoryRequest(BaseModel):
+    """Request body for POST /history/save"""
+    discrepancies: list[HistoryEntryItem]
+    custom_name: str | None = None
+
+
+class LoadHistoryRequest(BaseModel):
+    """Request body for POST /history/load"""
+    file_name: str
 
 logger = logging.getLogger(__name__)
 
@@ -243,7 +264,8 @@ async def process_excel_async(
     sheet_name: str = "Sheet1",
     debit_plus_credit_column: Optional[str] = None,
     debit_column: Optional[str] = None,
-    credit_column: Optional[str] = None
+    credit_column: Optional[str] = None,
+    aggregated_total_column: Optional[str] = None
 ) -> Tuple[dict, int]:
     """
     Async wrapper for Excel processing using asyncio.to_thread
@@ -260,6 +282,7 @@ async def process_excel_async(
         debit_plus_credit_column: Combined amount column (3-col format)
         debit_column: Debit column (4-col format)
         credit_column: Credit column (4-col format)
+        aggregated_total_column: Optional column name for Aggregated Total extraction
 
     Returns:
         Tuple of (processed_data, processing_time_ms)
@@ -282,7 +305,8 @@ async def process_excel_async(
             sheet_name,
             debit_plus_credit_column,
             debit_column,
-            credit_column
+            credit_column,
+            aggregated_total_column
         )
 
         processing_time_ms = result.get("processing_metadata", {}).get("processing_time_ms", 0)
@@ -306,7 +330,8 @@ async def process_reconciliation(
     sheetName: str = Form("Sheet1"),
     debitPlusCreditColumn: Optional[str] = Form(None),
     debitColumn: Optional[str] = Form(None),
-    creditColumn: Optional[str] = Form(None)
+    creditColumn: Optional[str] = Form(None),
+    aggregatedTotalColumn: Optional[str] = Form(None)
 ):
     """
     Main reconciliation processing endpoint
@@ -466,7 +491,7 @@ async def process_reconciliation(
             excel_task = process_excel_async(
                 excel_path, companyData.filename or "", request_id, formatType,
                 transactionDateColumn, transactionDetailsColumn, sheetName,
-                debitPlusCreditColumn, debitColumn, creditColumn
+                debitPlusCreditColumn, debitColumn, creditColumn, aggregatedTotalColumn
             )
 
             # Run both tasks concurrently and wait for both to complete
@@ -583,6 +608,8 @@ async def process_reconciliation(
                     "company_records": company_transactions,
                     "discrepancies": discrepancies
                 },
+                "bank_net_total": pdf_result.get("bank_net_total"),
+                "company_net_total": excel_result.get("company_net_total"),
                 "errors": [],
                 "message": f"✅ Reconciliation complete - Found {len(discrepancies)} discrepancies"
             }
@@ -607,5 +634,92 @@ async def process_reconciliation(
     finally:
         # Guaranteed cleanup: Always delete uploaded files
         await cleanup_uploaded_files(pdf_path, excel_path)
+
+
+# ==================== History Management Endpoints (Open de Past) ====================
+
+history_service = HistoryService()
+
+
+@router.post("/history/save", status_code=201)
+async def save_history(request: SaveHistoryRequest):
+    """
+    Save completed reconciliation discrepancies to a new SQLite history file.
+
+    Expects JSON body with discrepancies array and optional custom_name.
+    Returns 201 on success, 409 on name collision, 422 on validation error.
+    """
+    try:
+        result = history_service.save_history(
+            name=request.custom_name,
+            discrepancies=[d.model_dump() for d in request.discrepancies]
+        )
+        logger.info(f"History saved: {result['file_name']} with {result['entry_count']} entries")
+        return result
+    except ValueError as e:
+        if "already exists" in str(e):
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "error": "name_collision",
+                    "message": str(e)
+                }
+            )
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "error": "validation_error",
+                "message": str(e)
+            }
+        )
+    except RuntimeError as e:
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "error": "save_failed",
+                "message": str(e)
+            }
+        )
+
+
+@router.get("/history/list")
+async def list_history():
+    """
+    List all saved SQLite history files in the Reconciliation History directory.
+    Returns file metadata including name, path, creation time, and entry count.
+    """
+    return history_service.list_history()
+
+
+@router.post("/history/load")
+async def load_history(request: LoadHistoryRequest):
+    """
+    Load discrepancy entries from a saved history file.
+    Each entry includes category, transaction_details, transaction_date, debit_credit_amount,
+    and from_past=True.
+
+    Returns 404 if the file is not found, 422 if the file is corrupted.
+    """
+    try:
+        result = history_service.load_history(request.file_name)
+        logger.info(f"History loaded: {result['file_name']} with {result['entry_count']} entries")
+        return result
+    except FileNotFoundError as e:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "error": "file_not_found",
+                "message": str(e)
+            }
+        )
+    except RuntimeError as e:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "error": "corrupt_file",
+                "message": str(e)
+            }
+        )
+
 
 # وَإِنَّ اللَّهَ لَهُوَ خَيْرُ الرَّازِقِينَ# Testing auto-reload Mon Jun 22 09:14:25 PST 2026

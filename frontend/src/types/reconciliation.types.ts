@@ -23,6 +23,7 @@ export interface DiscrepancyTransaction {
   'Transaction Detail': string;
   'Debit/Credit': number;
   'FROM': 'Bank' | 'Company';
+  'from_past'?: boolean;
 }
 
 // Reconciliation Summary Interface
@@ -39,6 +40,12 @@ export interface ReconciliationSummary {
   concurrent_processing: boolean;
 }
 
+// Net Total Value Interface
+export interface NetTotalValue {
+  value: number | null;
+  status: 'found' | 'missing' | 'invalid';
+}
+
 // Reconciliation Result Interface
 export interface ReconciliationResult {
   request_id: string;
@@ -50,8 +57,14 @@ export interface ReconciliationResult {
     company_records: CompanyTransaction[];
     discrepancies: DiscrepancyTransaction[];
   };
+  bank_net_total?: NetTotalValue;
+  company_net_total?: NetTotalValue;
   errors: string[];
   message: string;
 }
 
 // وَإِنَّ اللَّهَ لَهُوَ خَيْرُ الرَّازِقِين
+
+// Import categorization types for frontend enhancements
+export type { TransactionCategory, CategorizedTransaction, DiscrepancySelectionState, ReconciliationCalculation } from './categorization.types';
+// وَإِنَّ اللَّهَ لَهُوَ خَيْرُ الرَّازِقِينَ

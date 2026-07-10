@@ -1,7 +1,8 @@
 'use client';
 
+import { useState, useCallback, useMemo } from 'react';
 import { ReconciliationResult } from '@/types/reconciliation.types';
-import { DiscrepancyList } from '@/components/results/DiscrepancyList';
+import { CategorizedResults } from '@/components/results/CategorizedResults';
 import { Badge } from '@/components/ui/badge';
 import {
   Card,
@@ -11,7 +12,14 @@ import {
   CardTitle,
 } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { CheckCircle2, Clock, FileSearch, RotateCcw } from 'lucide-react';
+import { CheckCircle2, Clock, FileSearch, RotateCcw, Save } from 'lucide-react';
+import {
+  generateItemId,
+  getDisplayAmount
+} from '@/lib/utils/categorizationUtils';
+import { formatAmount } from '@/lib/utils/categorizationUtils';
+import { historyClient } from '@/lib/api/historyClient';
+import { Input } from '@/components/ui/input';
 
 interface ReconciliationResultsProps {
   result: ReconciliationResult;
@@ -45,7 +53,92 @@ function statusVariant(status: ReconciliationResult['processing_status']) {
 
 export function ReconciliationResults({ result, onStartNew }: ReconciliationResultsProps) {
   const { request_id, processing_status, processing_timestamp, summary } = result;
-  const discrepancies = result.results.discrepancies;
+  const [discrepancies, setDiscrepancies] = useState(result.results.discrepancies);
+  const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set());
+
+  // Generate itemIds for each discrepancy for selection tracking
+  const itemIds = useMemo(() => {
+    return new Set(discrepancies.map((d, index) =>
+      generateItemId(d['Transaction_date'], d.FROM, d['Debit/Credit'], index)
+    ));
+  }, [discrepancies]);
+
+  // Clean up selectedItems when discrepancies change (remove stale selections)
+  const validSelectedItems = useMemo(() => {
+    const valid = new Set<string>();
+    selectedItems.forEach(id => {
+      if (itemIds.has(id)) valid.add(id);
+    });
+    return valid;
+  }, [selectedItems, itemIds]);
+
+  // Toggle selection callback
+  const toggleSelection = useCallback((itemId: string) => {
+    setSelectedItems(prev => {
+      const next = new Set(prev);
+      if (next.has(itemId)) {
+        next.delete(itemId);
+      } else {
+        next.add(itemId);
+      }
+      return next;
+    });
+  }, []);
+
+  // Handle manual reconciliation execution
+  /**
+   * وَهُوَ عَلَى كُلِّ شَيْءٍ قَدِيرٌ
+   * Execute manual reconciliation by removing selected items from the list
+   */
+  const handleReconcile = useCallback((selectedItemIds: Set<string>) => {
+    setDiscrepancies(prev =>
+      prev.filter((d, index) => {
+        const itemId = generateItemId(d['Transaction_date'], d.FROM, d['Debit/Credit'], index);
+        return !selectedItemIds.has(itemId);
+      })
+    );
+    setSelectedItems(new Set());
+  }, []);
+
+  // Save history state
+  const [saveName, setSaveName] = useState('');
+  const [isSaving, setIsSaving] = useState(false);
+  const [saveMessage, setSaveMessage] = useState<string | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
+
+  const handleSave = useCallback(async () => {
+    setIsSaving(true);
+    setSaveMessage(null);
+    setSaveError(null);
+
+    try {
+      const historyEntries = discrepancies.map(d => ({
+        category: categorizeDiscrepancy(d.FROM, d['Debit/Credit']),
+        transaction_details: d['Transaction Detail'],
+        transaction_date: d['Transaction_date'],
+        debit_credit_amount: d['Debit/Credit'],
+      }));
+
+      const result = await historyClient.saveHistory(
+        historyEntries,
+        saveName.trim() || undefined,
+      );
+      setSaveMessage(`Saved ${result.entry_count} discrepancies as "${result.file_name}"`);
+      setSaveName('');
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : 'Failed to save history');
+    } finally {
+      setIsSaving(false);
+    }
+  }, [discrepancies, saveName]);
+
+  // Helper: determine category from source and amount
+  function categorizeDiscrepancy(from: string, amount: number): string {
+    if (from === 'Company' && amount < 0) return 'Unpresented Checks';
+    if (from === 'Company' && amount >= 0) return 'Uncleared Checks';
+    if (from === 'Bank' && amount >= 0) return 'Bank Debited But not Credited in Cashbook';
+    return 'Bank Credited But not Debited in Cashbook';
+  }
 
   const summaryItems = [
     { label: 'Bank Transactions', value: summary.total_bank_transactions },
@@ -143,9 +236,61 @@ export function ReconciliationResults({ result, onStartNew }: ReconciliationResu
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <DiscrepancyList discrepancies={discrepancies} />
+          <CategorizedResults
+            discrepancies={discrepancies}
+            bankNetTotal={result.bank_net_total}
+            companyNetTotal={result.company_net_total}
+            selectedItems={validSelectedItems}
+            onToggleSelection={toggleSelection}
+            onReconcile={handleReconcile}
+          />
         </CardContent>
       </Card>
+
+      {/* Save to History section */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Save className="size-4" />
+            Save to History
+          </CardTitle>
+          <CardDescription>
+            Save these discrepancies as a reconciliation history file for future reference
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="flex items-center gap-3">
+            <Input
+              placeholder="Optional custom name (leave empty for auto date-time)"
+              value={saveName}
+              onChange={(e) => setSaveName(e.target.value)}
+              disabled={isSaving}
+              className="max-w-sm"
+            />
+            <Button
+              onClick={handleSave}
+              disabled={discrepancies.length === 0 || isSaving}
+            >
+              <Save data-icon="inline-start" />
+              {isSaving ? 'Saving...' : 'Complete Reconciliation'}
+            </Button>
+          </div>
+          {saveMessage && (
+            <p className="text-sm text-green-600">{saveMessage}</p>
+          )}
+          {saveError && (
+            <p className="text-sm text-red-600">{saveError}</p>
+          )}
+          {discrepancies.length === 0 && (
+            <p className="text-xs text-muted-foreground">
+              No discrepancies to save. Complete a reconciliation first.
+            </p>
+          )}
+        </CardContent>
+      </Card>
+
     </div>
   );
 }
+
+// وَإِنَّ اللَّهَ لَهُوَ خَيْرُ الرَّازِقِينَ

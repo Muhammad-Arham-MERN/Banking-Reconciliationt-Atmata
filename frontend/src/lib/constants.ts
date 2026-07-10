@@ -143,6 +143,10 @@ export const FIELD_LABELS = {
   CREDIT_COLUMN_LABEL: 'Credit Column',
   CREDIT_COLUMN_PLACEHOLDER: 'e.g., Credit, Credits',
 
+  // Aggregated Total column
+  AGGREGATED_TOTAL_COLUMN_LABEL: 'Aggregated Total Column',
+  AGGREGATED_TOTAL_COLUMN_PLACEHOLDER: 'e.g., Aggregated Total, Grand Total, Total',
+
   // Submit button
   SUBMIT_BUTTON_LABEL: 'Submit for Processing',
   SUBMIT_BUTTON_LOADING: 'Processing...',
