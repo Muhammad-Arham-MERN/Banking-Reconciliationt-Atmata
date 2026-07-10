@@ -6,21 +6,31 @@
 
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import type { BankStatementFile, CompanyDataFile, ColumnMappingConfiguration } from '../../types/upload';
 import type { ReconciliationResult } from '@/types/reconciliation.types';
+import type { HistoryFile } from '@/types/history.types';
 import { BankUploadZone } from './BankUploadZone';
 import { CompanyUploadZone } from './CompanyUploadZone';
 import { FormatSelector } from './FormatSelector';
 import { ColumnMappingFields } from './ColumnMappingFields';
 import { ReconciliationResults } from '@/components/results/ReconciliationResults';
 import { reconciliationClient } from '@/lib/api/reconciliationClient';
+import { historyClient } from '@/lib/api/historyClient';
 import { canSubmitForm, preserveCommonFields, updateColumnMappingValidation } from '../../lib/validation';
 import { Button } from '@/components/ui/button';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 
 const INITIAL_COLUMN_MAPPING: ColumnMappingConfiguration = {
   formatType: 'debit-plus-credit',
   sheetName: 'Sheet1',
+  aggregatedTotalColumn: '',
   debitPlusCreditFields: {
     transactionDateColumn: '',
     debitPlusCreditColumn: '',
@@ -42,6 +52,20 @@ export function UploadForm() {
   const [submissionStatus, setSubmissionStatus] = useState<'idle' | 'success' | 'error'>('idle');
   const [submissionError, setSubmissionError] = useState<string | undefined>();
   const [reconciliationResult, setReconciliationResult] = useState<ReconciliationResult | null>(null);
+
+  // Open Maazi state
+  const [historyFiles, setHistoryFiles] = useState<HistoryFile[]>([]);
+  const [selectedHistoryFile, setSelectedHistoryFile] = useState<string>('');
+  const [historyLoading, setHistoryLoading] = useState(false);
+
+  // Load history files on mount
+  useEffect(() => {
+    setHistoryLoading(true);
+    historyClient.listHistory()
+      .then(resp => setHistoryFiles(resp.files))
+      .catch(() => setHistoryFiles([]))
+      .finally(() => setHistoryLoading(false));
+  }, []);
 
   const handleBankFileUpload = (file: BankStatementFile) => {
     setBankStatement(file);
@@ -110,6 +134,8 @@ export function UploadForm() {
       const sheetName = columnMapping.sheetName.trim() || 'Sheet1';
       let result: ReconciliationResult;
 
+      const aggregatedTotalColumn = columnMapping.aggregatedTotalColumn?.trim() || undefined;
+
       if (columnMapping.formatType === 'debit-plus-credit' && columnMapping.debitPlusCreditFields) {
         const fields = columnMapping.debitPlusCreditFields;
         result = await reconciliationClient.processReconciliation(
@@ -119,7 +145,10 @@ export function UploadForm() {
           fields.transactionDateColumn.trim(),
           fields.transactionDetailsColumn.trim(),
           sheetName,
-          fields.debitPlusCreditColumn.trim()
+          fields.debitPlusCreditColumn.trim(),
+          undefined,
+          undefined,
+          aggregatedTotalColumn
         );
       } else if (columnMapping.formatType === 'debit-pipe-credit' && columnMapping.debitPipeCreditFields) {
         const fields = columnMapping.debitPipeCreditFields;
@@ -132,10 +161,23 @@ export function UploadForm() {
           sheetName,
           undefined,
           fields.debitColumn.trim(),
-          fields.creditColumn.trim()
+          fields.creditColumn.trim(),
+          aggregatedTotalColumn
         );
       } else {
         throw new Error('Invalid column mapping configuration');
+      }
+
+      // Merge past discrepancies if a history file is selected
+      if (selectedHistoryFile) {
+        try {
+          const pastData = await historyClient.loadHistory(selectedHistoryFile);
+          const currentDiscrepancies = result.results.discrepancies || [];
+          const mergedDiscrepancies = mergeDiscrepancies(currentDiscrepancies, pastData.discrepancies);
+          result.results.discrepancies = mergedDiscrepancies;
+        } catch {
+          // If loading past fails, proceed with current results only
+        }
       }
 
       setReconciliationResult(result);
@@ -150,6 +192,32 @@ export function UploadForm() {
   };
 
   const canSubmit = canSubmitForm({ bankStatement, companyData, columnMapping });
+
+  // Merge past discrepancies with current ones, suppressing exact duplicates (same details + same date)
+  function mergeDiscrepancies(current: any[], past: any[]): any[] {
+    const currentKeys = new Set(
+      current.map(d => `${d['Transaction Detail'] ?? d.transaction_details}|${d['Transaction_date'] ?? d.transaction_date}`)
+    );
+    const toAdd = past.filter(p => {
+      const key = `${p.transaction_details}|${p.transaction_date}`;
+      return !currentKeys.has(key);
+    });
+    const mapped = toAdd.map(p => ({
+      'Transaction_date': p.transaction_date,
+      'Transaction Detail': p.transaction_details,
+      'Debit/Credit': p.debit_credit_amount,
+      'FROM': p.category && p.category.includes('Bank') ? 'Bank' : 'Company',
+      from_past: true,
+    }));
+    // Sort combined list by date
+    const combined = [...current, ...mapped];
+    combined.sort((a, b) => {
+      const da = a['Transaction_date'] ?? '';
+      const db = b['Transaction_date'] ?? '';
+      return da.localeCompare(db);
+    });
+    return combined;
+  }
 
   if (reconciliationResult) {
     return (
@@ -169,6 +237,48 @@ export function UploadForm() {
           <p className="text-gray-600">
             Upload your bank statement and company data files to begin reconciliation
           </p>
+        </div>
+
+        {/* Open Maazi: Optional past history selection */}
+        <div className="rounded-xl border border-purple-200 bg-gradient-to-br from-purple-50/70 via-white to-purple-50/30 px-5 py-4 shadow-sm transition-all duration-200 hover:shadow-md hover:border-purple-300">
+          <div className="flex items-center gap-4 flex-wrap">
+            <div className="flex items-center gap-2.5">
+              <div className="flex h-8 w-8 items-center justify-center rounded-full bg-purple-100 text-purple-600">
+                <svg width="14" height="14" viewBox="0 0 15 15" fill="none" xmlns="http://www.w3.org/2000/svg">
+                  <path d="M7.5 1.5C4.5 1.5 2 4 2 7.5C2 11 4.5 13.5 7.5 13.5C10.5 13.5 13 11 13 7.5C13 4 10.5 1.5 7.5 1.5Z" stroke="currentColor" strokeWidth="1.2"/>
+                  <path d="M7.5 5V8M7.5 10V9.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round"/>
+                </svg>
+              </div>
+              <label className="text-sm font-semibold text-purple-900 whitespace-nowrap">
+                Open Maazi
+              </label>
+            </div>
+            <Select value={selectedHistoryFile || null} onValueChange={(v) => setSelectedHistoryFile(v ?? '')}>
+              <SelectTrigger className="min-w-[240px]">
+                <SelectValue placeholder={historyLoading ? 'Loading...' : historyFiles.length === 0 ? 'No history available' : 'Select a past reconciliation'} />
+              </SelectTrigger>
+              <SelectContent>
+                {historyFiles.length === 0 ? (
+                  <SelectItem value="__none__" disabled>No history files found</SelectItem>
+                ) : (
+                  historyFiles.map(f => (
+                    <SelectItem key={f.file_name} value={f.file_name}>
+                      {f.file_name.replace('.sqlite', '')} ({f.entry_count} entries)
+                    </SelectItem>
+                  ))
+                )}
+              </SelectContent>
+            </Select>
+            {selectedHistoryFile && (
+              <div className="flex items-center gap-1.5 rounded-full bg-purple-100/80 px-3 py-1 text-xs font-medium text-purple-700">
+                <svg width="10" height="10" viewBox="0 0 15 15" fill="none" xmlns="http://www.w3.org/2000/svg">
+                  <path d="M7.5 1.5C4.5 1.5 2 4 2 7.5C2 11 4.5 13.5 7.5 13.5C10.5 13.5 13 11 13 7.5C13 4 10.5 1.5 7.5 1.5Z" stroke="currentColor" strokeWidth="1.2"/>
+                  <path d="M7.5 5V8M7.5 10V9.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round"/>
+                </svg>
+                Past discrepancies will merge into results
+              </div>
+            )}
+          </div>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">

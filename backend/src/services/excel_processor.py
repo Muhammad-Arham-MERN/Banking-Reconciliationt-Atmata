@@ -49,7 +49,8 @@ class ExcelProcessor:
         sheet_name: str = "Sheet1",
         debit_plus_credit_column: Optional[str] = None,
         debit_column: Optional[str] = None,
-        credit_column: Optional[str] = None
+        credit_column: Optional[str] = None,
+        aggregated_total_column: Optional[str] = None
     ) -> pd.DataFrame:
         """
         Extract transaction data from Excel company records
@@ -64,6 +65,7 @@ class ExcelProcessor:
             debit_plus_credit_column: Combined amount column name (3-col format)
             debit_column: Debit column name (4-col format)
             credit_column: Credit column name (4-col format)
+            aggregated_total_column: Optional column name for Aggregated Total extraction (last row value)
 
         Returns:
             DataFrame with extracted transaction data
@@ -139,6 +141,13 @@ class ExcelProcessor:
                 columns_to_extract.append(debit_plus_credit_column)
             elif format_type == 'debit-pipe-credit' and debit_column and credit_column:
                 columns_to_extract.extend([debit_column, credit_column])
+
+            # Include the Aggregated Total column if provided so it's available in the returned DataFrame
+            if aggregated_total_column and aggregated_total_column not in columns_to_extract:
+                if aggregated_total_column in available_columns:
+                    columns_to_extract.append(aggregated_total_column)
+                else:
+                    logger.warning(f"Aggregated Total column '{aggregated_total_column}' not found in Excel columns: {available_columns}")
 
             try:
                 df_extracted = df[columns_to_extract].copy()
@@ -326,7 +335,8 @@ class ExcelProcessor:
         sheet_name: str = "Sheet1",
         debit_plus_credit_column: Optional[str] = None,
         debit_column: Optional[str] = None,
-        credit_column: Optional[str] = None
+        credit_column: Optional[str] = None,
+        aggregated_total_column: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         Complete Excel processing pipeline: extract and transform
@@ -341,6 +351,7 @@ class ExcelProcessor:
             debit_plus_credit_column: Combined amount column name (3-col format)
             debit_column: Debit column name (4-col format)
             credit_column: Credit column name (4-col format)
+            aggregated_total_column: Optional column name for Aggregated Total extraction (last row value)
 
         Returns:
             Dictionary with processed data and metadata
@@ -355,7 +366,7 @@ class ExcelProcessor:
         print(f"[EXCEL DEBUG] Starting Excel processing for {excel_path.name}")
 
         try:
-            # Extract raw data
+            # Extract raw data (pass aggregated_total_column so it's available on the raw df)
             df = self.extract_company_records(
                 excel_path,
                 transaction_date_column,
@@ -364,8 +375,35 @@ class ExcelProcessor:
                 sheet_name,
                 debit_plus_credit_column,
                 debit_column,
-                credit_column
+                credit_column,
+                aggregated_total_column
             )
+
+            # Extract last Aggregated Total column value
+            company_net_total = {"value": None, "status": "missing"}
+            if aggregated_total_column:
+                if aggregated_total_column in df.columns:
+                    valid_values = df[aggregated_total_column].dropna()
+                    if not valid_values.empty:
+                        last_value = valid_values.iloc[-1]
+                        try:
+                            # Clean currency symbols and commas, then parse
+                            cleaned = str(last_value).replace("$", "").replace(",", "").strip()
+                            if cleaned:
+                                company_net_total["value"] = float(cleaned)
+                                company_net_total["status"] = "found"
+                            else:
+                                company_net_total["status"] = "invalid"
+                        except (ValueError, TypeError):
+                            company_net_total["status"] = "invalid"
+                            logger.warning(f"Could not parse Aggregated Total value: {last_value}")
+                    else:
+                        company_net_total["status"] = "invalid"
+                        logger.warning("Aggregated Total column found but no valid values")
+                else:
+                    logger.warning(f"Aggregated Total column '{aggregated_total_column}' not found in Excel data")
+            else:
+                logger.info("No Aggregated Total column specified")
 
             # Transform to standard format
             print(f"[EXCEL DEBUG] DataFrame has {len(df)} rows, columns: {df.columns.tolist()}")
@@ -380,6 +418,7 @@ class ExcelProcessor:
             # Build result
             result = {
                 "company_records": standardized_transactions,
+                "company_net_total": company_net_total,
                 "processing_metadata": {
                     "excel_filename": excel_path.name,
                     "processing_time_ms": total_processing_time_ms,

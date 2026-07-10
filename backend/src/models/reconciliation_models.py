@@ -65,6 +65,7 @@ class DiscrepancyTransaction(BaseModel):
     Transaction_Detail: str = Field(..., description="Transaction description")
     Debit_Credit: float = Field(..., description="Amount with sign (positive for credit, negative for debit)")
     FROM: str = Field(..., description="Source of this discrepancy: 'Bank' or 'Company'")
+    from_past: bool = Field(False, description="Whether this entry originated from a loaded history file")
 
     model_config = {
         "json_schema_extra": {

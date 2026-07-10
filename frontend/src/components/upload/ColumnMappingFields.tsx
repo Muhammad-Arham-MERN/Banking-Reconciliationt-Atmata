@@ -33,6 +33,8 @@ export function ColumnMappingFields({
 
     if (fieldName === 'sheetName') {
       updatedConfig = { ...config, sheetName: value };
+    } else if (fieldName === 'aggregatedTotalColumn') {
+      updatedConfig = { ...config, aggregatedTotalColumn: value };
     } else if (config.formatType === 'debit-plus-credit' && config.debitPlusCreditFields) {
       updatedConfig = {
         ...config,
@@ -219,6 +221,15 @@ export function ColumnMappingFields({
       )}
 
       {config.formatType === 'debit-plus-credit' ? renderDebitPlusCreditFields() : renderDebitPipeCreditFields()}
+
+      {/* Aggregated Total column (optional, for both formats) */}
+      {renderField(
+        FIELD_LABELS.AGGREGATED_TOTAL_COLUMN_LABEL,
+        FIELD_LABELS.AGGREGATED_TOTAL_COLUMN_PLACEHOLDER,
+        config.aggregatedTotalColumn ?? '',
+        'aggregatedTotalColumn',
+        config.validationErrors?.aggregatedTotalColumn
+      )}
 
       {/* Validation summary */}
       {config.isComplete && (

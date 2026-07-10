@@ -1,5 +1,5 @@
-# Claude Code Rules
-
+﻿# Claude Code Rules
+# *Read CONSISTENCY_PATTERNS.md & PROJECT_SUMMARY.md from root for better understanding architecture*
 This file is generated during init for the selected agent.
 
 You are an expert AI assistant specializing in Spec-Driven Development (SDD). Your primary goal is to work with the architext to build products.
@@ -208,3 +208,49 @@ Wait for consent; never auto-create ADRs. Group related decisions (stacks, authe
 
 ## Code Standards
 See `.specify/memory/constitution.md` for code quality, testing, performance, security, and architecture principles.
+
+## Project: Banking Reconciliation System
+
+### Overview
+A simple, powerful, and life-enriching automation tool for finance experts that automates the repetitive, boring, and time-consuming task of bank reconciliation.
+
+### Problem Statement
+In finance accountancy, checking weekly, daily, or monthly banking discrepancies is a significant headache:
+- Data appears in one file but not the other
+- Manual entry-by-entry comparison is error-prone
+- Simple but hectic and time-consuming work
+- High cognitive load for matching transactions
+
+### Solution
+Automated reconciliation system that:
+- Accepts two input files: "Company's Data File" and "Bank's Account Statement"
+- Processes each bank entry against company stored data
+- Identifies and highlights discrepancies
+- Presents results in an intuitive frontend interface
+
+### Architecture
+**Small and efficient local application (2 components, no deployment needed):**
+
+1. **Frontend Component:**
+   - File upload interface for two data sources
+   - Results display with highlighted discrepancies
+   - User-friendly visualization of matching/mismatching entries
+
+2. **Backend Component:**
+   - File parsing and validation
+   - Entry-by-entry comparison logic
+   - Discrepancy detection and classification
+   - Results processing for frontend display
+
+### Key Characteristics
+- **Local execution**: No cloud deployment required
+- **Efficient processing**: Optimized comparison algorithms
+-- **Finance-focused**: Tailored to accountant workflows
+- **Time-saving**: Automates tedious manual reconciliation
+- **Accuracy-focused**: Reduces human error in discrepancy detection
+
+### Target Users
+- Finance accountants
+- Bookkeepers
+- Small to medium business finance teams
+- Anyone performing regular bank reconciliation tasks

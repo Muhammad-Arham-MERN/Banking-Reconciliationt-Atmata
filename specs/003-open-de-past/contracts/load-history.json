@@ -1,0 +1,69 @@
+{
+  "endpoint": "POST /history/load",
+  "description": "Load discrepancy entries from a saved history file for merging with current reconciliation",
+  "request": {
+    "contentType": "application/json",
+    "body": {
+      "type": "object",
+      "required": ["file_name"],
+      "properties": {
+        "file_name": {
+          "type": "string",
+          "description": "Filename of the history file to load (including .sqlite extension)",
+          "example": "2026-07-03_14-30-00.sqlite"
+        }
+      }
+    }
+  },
+  "responses": {
+    "200": {
+      "description": "History file loaded successfully",
+      "body": {
+        "type": "object",
+        "properties": {
+          "status": { "type": "string", "enum": ["loaded"] },
+          "file_name": { "type": "string" },
+          "discrepancies": {
+            "type": "array",
+            "description": "All discrepancy entries from the history file. Each entry will be marked with from_past=true when merged into results.",
+            "items": {
+              "type": "object",
+              "properties": {
+                "category": { "type": "string", "enum": [
+                  "Unpresented Checks",
+                  "Uncleared Checks",
+                  "Bank Debited But not Credited in Cashbook",
+                  "Bank Credited But not Debited in Cashbook"
+                ]},
+                "transaction_details": { "type": "string" },
+                "transaction_date": { "type": "string", "format": "date" },
+                "debit_credit_amount": { "type": "number" }
+              }
+            }
+          },
+          "entry_count": { "type": "integer" }
+        }
+      }
+    },
+    "404": {
+      "description": "History file not found",
+      "body": {
+        "type": "object",
+        "properties": {
+          "error": { "type": "string", "enum": ["file_not_found"] },
+          "message": { "type": "string" }
+        }
+      }
+    },
+    "422": {
+      "description": "Corrupted or unreadable history file",
+      "body": {
+        "type": "object",
+        "properties": {
+          "error": { "type": "string", "enum": ["corrupt_file"] },
+          "message": { "type": "string", "example": "History file is corrupted or unreadable. Proceeding with current reconciliation only." }
+        }
+      }
+    }
+  }
+}

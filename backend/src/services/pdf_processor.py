@@ -396,6 +396,31 @@ class PDFProcessor:
             # Extract raw data
             df = self.extract_bank_statement(pdf_path)
 
+            # Extract last Balance column value from raw DataFrame
+            # Balance is at column index 10 in CANONICAL_COLUMNS (named "Balance")
+            bank_net_total = {"value": None, "status": "missing"}
+            if not df.empty and "Balance" in df.columns:
+                # Drop rows where Balance is NaN/None before getting last
+                valid_balance = df["Balance"].dropna()
+                if not valid_balance.empty:
+                    last_balance = valid_balance.iloc[-1]
+                    try:
+                        # Clean currency symbols and commas, then parse
+                        cleaned = str(last_balance).replace("$", "").replace(",", "").strip()
+                        if cleaned:
+                            bank_net_total["value"] = float(cleaned)
+                            bank_net_total["status"] = "found"
+                        else:
+                            bank_net_total["status"] = "invalid"
+                    except (ValueError, TypeError):
+                        bank_net_total["status"] = "invalid"
+                        logger.warning(f"Could not parse Balance value: {last_balance}")
+                else:
+                    bank_net_total["status"] = "invalid"
+                    logger.warning("Balance column found but no valid values")
+            else:
+                logger.warning("Balance column not found in extracted PDF data")
+
             # Transform to standard format
             standardized_transactions = self.transform_to_standard_format(df)
 
@@ -404,6 +429,7 @@ class PDFProcessor:
             # Build result
             result = {
                 "bank_statement": standardized_transactions,
+                "bank_net_total": bank_net_total,
                 "processing_metadata": {
                     "pdf_filename": pdf_path.name,
                     "processing_time_ms": total_processing_time_ms,

@@ -33,7 +33,8 @@ export const reconciliationClient = {
     sheetName: string = "Sheet1",
     debitPlusCreditColumn?: string,
     debitColumn?: string,
-    creditColumn?: string
+    creditColumn?: string,
+    aggregatedTotalColumn?: string
   ): Promise<ReconciliationResult> {
     const formData = new FormData();
 
@@ -54,6 +55,10 @@ export const reconciliationClient = {
 
     if (creditColumn) {
       formData.append('creditColumn', creditColumn);
+    }
+
+    if (aggregatedTotalColumn) {
+      formData.append('aggregatedTotalColumn', aggregatedTotalColumn);
     }
 
     const response = await fetch(`${API_BASE_URL}/karwai`, {

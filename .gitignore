@@ -50,7 +50,26 @@ coverage/
 Thumbs.db
 *.tmp
 
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+*.egg
+.venv/
+venv/
+env/
+*.so
+.pytest_cache/
+htmlcov/
+.coverage
+.coverage.*
+*.cover
+
 # Temporary files
 *.temp
 tmp/
 assets_dev/
+
+# Reconciliation history
+Reconciliation History/
