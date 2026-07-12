@@ -24,9 +24,11 @@ start "Frontend - Next.js" cmd /k "cd /d "%ROOT%\frontend" && npm run dev"
 
 
 
-REM Start Backend
+REM Start Backend (pushd changes dir BEFORE start, so the new window inherits the right CWD)
 
-start "Backend - Uvicorn" cmd /k "cd /d "%ROOT%\backend" && python -m uvicorn src.main:app --host 0.0.0.0 --port 8000 --reload"
+pushd "%ROOT%\backend"
+start "Backend - Uvicorn" cmd /k python -m uvicorn src.main:app --host 0.0.0.0 --port 8000 --reload
+popd
 
 
 

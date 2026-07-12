@@ -1,13 +1,15 @@
 # بِسْمِ اللّٰهِ الرَّحْمٰنِ الرَّحِيمِ
 """
 History Service
-Manages saving, listing, and loading reconciliation history as SQLite files
+Manages saving, listing, and loading reconciliation history
 """
+import json
 import sqlite3
 import logging
 from datetime import datetime
 from pathlib import Path
 from typing import List, Dict, Any, Optional
+from src.services.db_service import db_service
 
 logger = logging.getLogger(__name__)
 
@@ -170,62 +172,69 @@ class HistoryService:
         return {"files": files, "total": len(files)}
 
     # وَهُوَ عَلَى كُلِّ شَيْءٍ قَدِيرٌ
-    def load_history(self, file_name: str) -> Dict[str, Any]:
+    async def load_history(self, file_name: str) -> Dict[str, Any]:
         """
-        Load discrepancy entries from a saved history file.
+        Load discrepancy entries from CockroachDB via asyncpg.
 
         Args:
-            file_name: Filename of the history file (with .sqlite extension)
+            file_name: Filename of the reconciliation record
 
         Returns:
             Dict with status, file_name, discrepancies array, entry_count
 
         Raises:
-            FileNotFoundError: If the file doesn't exist
-            RuntimeError: If the file is corrupted
+            FileNotFoundError: If the record doesn't exist
+            RuntimeError: If the data is malformed
         """
-        file_path = self._get_file_path(file_name)
+        row = await db_service.fetchrow(
+            "SELECT file_name, data FROM reconciliation_data WHERE file_name = $1",
+            file_name,
+        )
 
-        if not file_path.exists():
-            raise FileNotFoundError(f"History file '{file_name}' not found.")
+        if not row:
+            raise FileNotFoundError(
+                f"History record '{file_name}' not found in cloud database."
+            )
 
-        if not file_path.name.endswith('.sqlite'):
-            # Add extension and retry
-            file_path = self._get_file_path(f"{file_name}.sqlite")
-            if not file_path.exists():
-                raise FileNotFoundError(f"History file '{file_name}' not found.")
-
-        try:
-            conn = sqlite3.connect(str(file_path))
-            conn.row_factory = sqlite3.Row
-            cursor = conn.cursor()
-
-            cursor.execute("SELECT category, transaction_details, transaction_date, debit_credit_amount FROM discrepancies ORDER BY transaction_date ASC")
-            rows = cursor.fetchall()
-            conn.close()
-
-            discrepancies = []
-            for row in rows:
-                discrepancies.append({
-                    "category": row["category"],
-                    "transaction_details": row["transaction_details"],
-                    "transaction_date": row["transaction_date"],
-                    "debit_credit_amount": row["debit_credit_amount"],
-                    "from_past": True
-                })
-
-            return {
-                "status": "loaded",
-                "file_name": file_path.name,
-                "discrepancies": discrepancies,
-                "entry_count": len(discrepancies)
-            }
-
-        except sqlite3.DatabaseError as e:
-            logger.error(f"Corrupted history file {file_name}: {str(e)}")
+        file_data = row["data"]
+        # CockroachDB JSONB returns as string via asyncpg by default
+        if isinstance(file_data, str):
+            try:
+                file_data = json.loads(file_data)
+            except json.JSONDecodeError:
+                logger.error(
+                    "Malformed JSON data for record '%s': %s",
+                    file_name, file_data[:200],
+                )
+                raise RuntimeError(
+                    f"History record '{file_name}' contains invalid JSON data. "
+                    f"Proceeding with current reconciliation only."
+                )
+        if not isinstance(file_data, list):
+            logger.error(
+                "Malformed data for record '%s': expected list, got %s",
+                file_name, type(file_data).__name__,
+            )
             raise RuntimeError(
-                f"History file '{file_name}' is corrupted or unreadable. "
+                f"History record '{file_name}' contains invalid data. "
                 f"Proceeding with current reconciliation only."
             )
+
+        discrepancies = []
+        for entry in file_data:
+            discrepancies.append({
+                "category": entry.get("category", ""),
+                "transaction_details": entry.get("transaction_details", ""),
+                "transaction_date": entry.get("transaction_date", ""),
+                "debit_credit_amount": entry.get("debit_credit_amount", 0.0),
+                "from_past": True,
+            })
+
+        return {
+            "status": "loaded",
+            "file_name": file_name,
+            "discrepancies": discrepancies,
+            "entry_count": len(discrepancies),
+        }
 
 # وَإِنَّ اللَّهَ لَهُوَ خَيْرُ الرَّازِقِينَ

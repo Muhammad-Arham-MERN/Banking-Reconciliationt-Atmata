@@ -1,16 +1,12 @@
-/*
- * بِسْمِ اللّٰهِ الرَّحْمٰنِ الرَّحِيمِ
- * Main Upload Page
- * Banking Reconciliation System Frontend
- */
+/** بِسْمِ اللَّهِ الرَّحْمٰنِ الرَّحِيمِ */
+import { auth } from "@/lib/auth";
+import { redirect } from "next/navigation";
+import { UploadForm } from "../../components/upload/UploadForm";
 
-import { UploadForm } from '../../components/upload/UploadForm';
+export default async function UploadPage() {
+  const session = await auth();
+  if (!session) redirect("/");
 
-/**
- * Main upload interface page
- * Features two-column layout for bank statement and company data upload
- */
-export default function UploadPage() {
   return (
     <main
       className="min-h-screen bg-gradient-to-br from-pink-50 to-red-50 py-8 px-4 sm:py-12 sm:px-6 lg:px-8"
@@ -18,20 +14,22 @@ export default function UploadPage() {
       aria-label="Bank reconciliation file upload interface"
     >
       <div className="max-w-7xl mx-auto">
-        {/* Page header */}
         <div className="text-center mb-6 sm:mb-8">
-          <h1 className="text-2xl sm:text-3xl md:text-4xl font-bold text-gray-900 mb-2">
-            Bank Reconciliation System
-          </h1>
-          <p className="text-base sm:text-lg text-gray-600">
-            Upload your files to automate reconciliation processing
-          </p>
+          {session.user?.name && (
+            <div className="relative inline-block">
+              <div className="absolute inset-0 bg-gradient-to-r from-emerald-200/40 via-teal-200/40 to-emerald-200/40 rounded-2xl blur-xl" />
+              <div className="relative px-6 sm:px-8 py-4 sm:py-5 bg-white/70 backdrop-blur-sm rounded-2xl shadow-sm border border-emerald-100/60">
+                <p className="text-2xl sm:text-3xl md:text-4xl font-bold bg-gradient-to-r from-emerald-700 via-teal-600 to-emerald-700 bg-clip-text text-transparent">
+                  Assalamu Alaikum, {session.user.name}
+                </p>
+                <p className="text-sm text-emerald-600/70 mt-1 italic">
+                  Peace be upon you
+                </p>
+              </div>
+            </div>
+          )}
         </div>
-
-        {/* Upload form with two-column layout */}
         <UploadForm />
-
-        {/* Help section */}
         <div className="mt-8 sm:mt-12 bg-white rounded-lg shadow-md p-4 sm:p-6">
           <h2 className="text-lg sm:text-xl font-semibold text-gray-800 mb-4">
             How to use
@@ -55,7 +53,4 @@ export default function UploadPage() {
     </main>
   );
 }
-
-/*
- * وَإِنَّ اللَّهَ لَهُوَ خَيْرُ الرَّازِقِينَ
- */
+/** وَإِنَّ اللَّهَ لَهُوَ خَيْرُ الرَّازِقِينَ */

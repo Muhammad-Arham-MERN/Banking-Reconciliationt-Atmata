@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useCallback, useMemo } from 'react';
+import { useSession } from 'next-auth/react';
 import { ReconciliationResult } from '@/types/reconciliation.types';
 import { CategorizedResults } from '@/components/results/CategorizedResults';
 import { Badge } from '@/components/ui/badge';
@@ -18,7 +19,8 @@ import {
   getDisplayAmount
 } from '@/lib/utils/categorizationUtils';
 import { formatAmount } from '@/lib/utils/categorizationUtils';
-import { historyClient } from '@/lib/api/historyClient';
+import { cloudHistoryClient } from '@/lib/api/cloudHistoryClient';
+import type { CloudHistoryEntry } from '@/types/cloud-history.types';
 import { Input } from '@/components/ui/input';
 
 interface ReconciliationResultsProps {
@@ -52,6 +54,7 @@ function statusVariant(status: ReconciliationResult['processing_status']) {
 }
 
 export function ReconciliationResults({ result, onStartNew }: ReconciliationResultsProps) {
+  const { data: session } = useSession();
   const { request_id, processing_status, processing_timestamp, summary } = result;
   const [discrepancies, setDiscrepancies] = useState(result.results.discrepancies);
   const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set());
@@ -111,26 +114,32 @@ export function ReconciliationResults({ result, onStartNew }: ReconciliationResu
     setSaveMessage(null);
     setSaveError(null);
 
+    const token = (session?.user as { access_token?: string } | undefined)?.access_token;
+    if (!token) {
+      setSaveError('Not authenticated. Please sign in again.');
+      setIsSaving(false);
+      return;
+    }
+
     try {
-      const historyEntries = discrepancies.map(d => ({
+      const fileData: CloudHistoryEntry[] = discrepancies.map(d => ({
         category: categorizeDiscrepancy(d.FROM, d['Debit/Credit']),
         transaction_details: d['Transaction Detail'],
         transaction_date: d['Transaction_date'],
         debit_credit_amount: d['Debit/Credit'],
       }));
 
-      const result = await historyClient.saveHistory(
-        historyEntries,
-        saveName.trim() || undefined,
-      );
-      setSaveMessage(`Saved ${result.entry_count} discrepancies as "${result.file_name}"`);
+      const fileName = saveName.trim() || `reconciliation-${Date.now()}`;
+
+      const result = await cloudHistoryClient.saveCloudFile(token, fileName, fileData);
+      setSaveMessage(`Saved "${result.file_name}" successfully`);
       setSaveName('');
     } catch (err) {
-      setSaveError(err instanceof Error ? err.message : 'Failed to save history');
+      setSaveError(err instanceof Error ? err.message : 'Failed to save');
     } finally {
       setIsSaving(false);
     }
-  }, [discrepancies, saveName]);
+  }, [discrepancies, saveName, session]);
 
   // Helper: determine category from source and amount
   function categorizeDiscrepancy(from: string, amount: number): string {

@@ -1,0 +1,249 @@
+openapi: 3.0.3
+info:
+  title: Cloud Database API - Bank Reconciliation System
+  description: API endpoints for storing and retrieving reconciliation data in the cloud database (CockroachDB). These endpoints sit behind the existing JWT auth middleware and request logging pipeline.
+  version: 1.0.0
+  contact:
+    name: Muhammad Arham
+
+servers:
+  - url: /api/cloud
+    description: Cloud database API prefix (mounted under the existing /api router)
+
+paths:
+  /files:
+    get:
+      summary: Retrieve authenticated user's stored file names
+      description: Returns a list of file name strings that the authenticated user has saved in the cloud database. Used by the frontend to populate a file selection list for loading past reconciliations.
+      operationId: listUserCloudFiles
+      tags:
+        - Cloud Database
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: Successfully retrieved file names
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FileListResponse"
+              example:
+                files: ["reconciliation-2026-07-01", "q2-report", "monthly-close-june"]
+        "401":
+          description: Missing or invalid authentication token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: unauthorized
+                message: Authentication required. Please sign in.
+                status_code: 401
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: internal_error
+                message: An unexpected error occurred
+        "503":
+          description: Database unavailable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: service_unavailable
+                message: Database is temporarily unavailable. Please try again later.
+
+  /save:
+    post:
+      summary: Save or overwrite reconciliation data
+      description: Persists a reconciliation record to the cloud database. If a record with the given file_name already exists for the authenticated user, it is overwritten (upsert behavior). The file_data is stored as-is without modification.
+      operationId: saveCloudReconciliation
+      tags:
+        - Cloud Database
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SaveReconciliationRequest"
+            example:
+              file_name: "reconciliation-2026-07-01"
+              file_data:
+                - name: "Vendor Payment"
+                  description: "Monthly vendor payment processing"
+                  debit_credit_value: 15000.00
+                  category: "Accounts Payable"
+                - name: "Utility Bill"
+                  description: "Electricity bill for June"
+                  debit_credit_value: 2500.50
+                  category: "Utilities"
+      responses:
+        "200":
+          description: Data saved or overwritten successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SaveSuccessResponse"
+              example:
+                success: true
+                message: "Reconciliation data saved successfully"
+                file_name: "reconciliation-2026-07-01"
+        "401":
+          description: Missing or invalid authentication token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: unauthorized
+                message: Authentication required. Please sign in.
+                status_code: 401
+        "422":
+          description: Validation error (missing/invalid fields)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ValidationErrorResponse"
+              example:
+                error: validation_error
+                message: "Validation failed"
+                details:
+                  - loc: ["body", "file_name"]
+                    msg: "String should have at least 1 character"
+                    type: "string_too_short"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: Database unavailable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Auth.js JWT token obtained from the frontend sign-in flow
+
+  schemas:
+    FileListResponse:
+      type: object
+      required:
+        - files
+      properties:
+        files:
+          type: array
+          description: List of file name strings stored by the authenticated user
+          items:
+            type: string
+            maxLength: 255
+
+    SaveReconciliationRequest:
+      type: object
+      required:
+        - file_name
+        - file_data
+      properties:
+        file_name:
+          type: string
+          description: Unique identifier for this reconciliation record
+          minLength: 1
+          maxLength: 255
+        file_data:
+          type: array
+          description: List of reconciliation data entries with structure matching the existing reconciliation output format
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/ReconciliationEntry"
+
+    ReconciliationEntry:
+      type: object
+      required:
+        - name
+        - description
+        - debit_credit_value
+        - category
+      properties:
+        name:
+          type: string
+          description: Transaction name or identifier
+        description:
+          type: string
+          description: Transaction description
+        debit_credit_value:
+          type: number
+          format: double
+          description: Monetary value of the transaction (positive = debit, negative = credit, or as defined by the reconciliation output)
+        category:
+          type: string
+          description: Transaction category (e.g., Accounts Payable, Revenue, Utilities)
+      additionalProperties: true
+      description: Each entry in the reconciliation data. Additional unexpected fields are accepted and stored as-is.
+
+    SaveSuccessResponse:
+      type: object
+      required:
+        - success
+        - message
+        - file_name
+      properties:
+        success:
+          type: boolean
+          description: Always true on success
+        message:
+          type: string
+          description: Human-readable success message
+        file_name:
+          type: string
+          description: The file_name that was saved/overwritten
+
+    ErrorResponse:
+      type: object
+      required:
+        - error
+        - message
+      properties:
+        error:
+          type: string
+          description: Machine-readable error code
+        message:
+          type: string
+          description: Human-readable error description
+        status_code:
+          type: integer
+          description: HTTP status code (optional, included for 401)
+
+    ValidationErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+        message:
+          type: string
+        details:
+          type: array
+          items:
+            type: object
+            properties:
+              loc:
+                type: array
+                items:
+                  type: string
+              msg:
+                type: string
+              type:
+                type: string
