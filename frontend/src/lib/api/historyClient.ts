@@ -1,4 +1,8 @@
 /**
+ * @deprecated Use cloudHistoryClient.ts instead for save/list operations.
+ * loadHistory() is still used by UploadForm.tsx for merging past discrepancies
+ * until a cloud equivalent endpoint is added.
+ *
  * History API Client (Open de Past)
  * Handles communication with backend history endpoints (save/list/load)
  */

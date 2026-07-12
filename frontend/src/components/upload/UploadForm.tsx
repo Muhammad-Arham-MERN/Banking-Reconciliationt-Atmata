@@ -7,18 +7,20 @@
 'use client';
 
 import React, { useState, useEffect, useCallback } from 'react';
+import { useSession } from 'next-auth/react';
 import type { BankStatementFile, CompanyDataFile, ColumnMappingConfiguration } from '../../types/upload';
 import type { ReconciliationResult } from '@/types/reconciliation.types';
-import type { HistoryFile } from '@/types/history.types';
 import { BankUploadZone } from './BankUploadZone';
 import { CompanyUploadZone } from './CompanyUploadZone';
 import { FormatSelector } from './FormatSelector';
 import { ColumnMappingFields } from './ColumnMappingFields';
 import { ReconciliationResults } from '@/components/results/ReconciliationResults';
 import { reconciliationClient } from '@/lib/api/reconciliationClient';
-import { historyClient } from '@/lib/api/historyClient';
+import { historyClient } from '@/lib/api/historyClient'; // @deprecated — only loadHistory() still needed for merge; cloud save/list handled by cloudHistoryClient
+import { cloudHistoryClient } from '@/lib/api/cloudHistoryClient';
 import { canSubmitForm, preserveCommonFields, updateColumnMappingValidation } from '../../lib/validation';
 import { Button } from '@/components/ui/button';
+import { Skeleton } from '@/components/ui/skeleton';
 import {
   Select,
   SelectContent,
@@ -44,6 +46,7 @@ const INITIAL_COLUMN_MAPPING: ColumnMappingConfiguration = {
  * Orchestrates file upload zones and manages form state
  */
 export function UploadForm() {
+  const { data: session } = useSession();
   const [bankStatement, setBankStatement] = useState<BankStatementFile | null>(null);
   const [companyData, setCompanyData] = useState<CompanyDataFile | null>(null);
   const [dragOverZone, setDragOverZone] = useState<'bank' | 'company' | null>(null);
@@ -53,19 +56,44 @@ export function UploadForm() {
   const [submissionError, setSubmissionError] = useState<string | undefined>();
   const [reconciliationResult, setReconciliationResult] = useState<ReconciliationResult | null>(null);
 
-  // Open Maazi state
-  const [historyFiles, setHistoryFiles] = useState<HistoryFile[]>([]);
-  const [selectedHistoryFile, setSelectedHistoryFile] = useState<string>('');
-  const [historyLoading, setHistoryLoading] = useState(false);
+  // Open Maazi state (cloud)
+  const [cloudFiles, setCloudFiles] = useState<string[]>([]);
+  const [selectedCloudFile, setSelectedCloudFile] = useState<string>('');
+  const [cloudHistoryLoading, setCloudHistoryLoading] = useState(false);
+  const [cloudHistoryError, setCloudHistoryError] = useState<string | null>(null);
 
-  // Load history files on mount
+  // Load cloud history files on mount
   useEffect(() => {
-    setHistoryLoading(true);
-    historyClient.listHistory()
-      .then(resp => setHistoryFiles(resp.files))
-      .catch(() => setHistoryFiles([]))
-      .finally(() => setHistoryLoading(false));
-  }, []);
+    const token = (session?.user as { access_token?: string } | undefined)?.access_token;
+    if (!token) return;
+
+    setCloudHistoryLoading(true);
+    setCloudHistoryError(null);
+
+    cloudHistoryClient.listCloudFiles(token)
+      .then(resp => setCloudFiles(resp.files))
+      .catch(err => {
+        setCloudFiles([]);
+        setCloudHistoryError(err instanceof Error ? err.message : 'Failed to load history');
+      })
+      .finally(() => setCloudHistoryLoading(false));
+  }, [session]);
+
+  const retryLoadCloudFiles = useCallback(() => {
+    const token = (session?.user as { access_token?: string } | undefined)?.access_token;
+    if (!token) return;
+
+    setCloudHistoryLoading(true);
+    setCloudHistoryError(null);
+
+    cloudHistoryClient.listCloudFiles(token)
+      .then(resp => setCloudFiles(resp.files))
+      .catch(err => {
+        setCloudFiles([]);
+        setCloudHistoryError(err instanceof Error ? err.message : 'Failed to load history');
+      })
+      .finally(() => setCloudHistoryLoading(false));
+  }, [session]);
 
   const handleBankFileUpload = (file: BankStatementFile) => {
     setBankStatement(file);
@@ -169,14 +197,14 @@ export function UploadForm() {
       }
 
       // Merge past discrepancies if a history file is selected
-      if (selectedHistoryFile) {
+      if (selectedCloudFile) {
         try {
-          const pastData = await historyClient.loadHistory(selectedHistoryFile);
+          const pastData = await historyClient.loadHistory(selectedCloudFile);
           const currentDiscrepancies = result.results.discrepancies || [];
           const mergedDiscrepancies = mergeDiscrepancies(currentDiscrepancies, pastData.discrepancies);
           result.results.discrepancies = mergedDiscrepancies;
-        } catch {
-          // If loading past fails, proceed with current results only
+        } catch (err) {
+          console.error('Failed to load past discrepancies:', err);
         }
       }
 
@@ -239,47 +267,84 @@ export function UploadForm() {
           </p>
         </div>
 
-        {/* Open Maazi: Optional past history selection */}
-        <div className="rounded-xl border border-purple-200 bg-gradient-to-br from-purple-50/70 via-white to-purple-50/30 px-5 py-4 shadow-sm transition-all duration-200 hover:shadow-md hover:border-purple-300">
-          <div className="flex items-center gap-4 flex-wrap">
-            <div className="flex items-center gap-2.5">
-              <div className="flex h-8 w-8 items-center justify-center rounded-full bg-purple-100 text-purple-600">
-                <svg width="14" height="14" viewBox="0 0 15 15" fill="none" xmlns="http://www.w3.org/2000/svg">
-                  <path d="M7.5 1.5C4.5 1.5 2 4 2 7.5C2 11 4.5 13.5 7.5 13.5C10.5 13.5 13 11 13 7.5C13 4 10.5 1.5 7.5 1.5Z" stroke="currentColor" strokeWidth="1.2"/>
-                  <path d="M7.5 5V8M7.5 10V9.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round"/>
-                </svg>
+        {/* Open Maazi: Optional past history selection (cloud) */}
+        {cloudHistoryLoading ? (
+          <div className="rounded-xl border border-purple-200 bg-purple-50/30 px-5 py-4 shadow-sm">
+            <div className="flex items-center gap-4 flex-wrap">
+              <div className="flex items-center gap-2.5">
+                <Skeleton className="h-8 w-8 rounded-full" />
+                <Skeleton className="h-4 w-24" />
               </div>
-              <label className="text-sm font-semibold text-purple-900 whitespace-nowrap">
-                Open Maazi
-              </label>
+              <Skeleton className="h-10 min-w-[240px] rounded-md" />
+              <Skeleton className="h-6 w-48 rounded-full" />
             </div>
-            <Select value={selectedHistoryFile || null} onValueChange={(v) => setSelectedHistoryFile(v ?? '')}>
-              <SelectTrigger className="min-w-[240px]">
-                <SelectValue placeholder={historyLoading ? 'Loading...' : historyFiles.length === 0 ? 'No history available' : 'Select a past reconciliation'} />
-              </SelectTrigger>
-              <SelectContent>
-                {historyFiles.length === 0 ? (
-                  <SelectItem value="__none__" disabled>No history files found</SelectItem>
-                ) : (
-                  historyFiles.map(f => (
-                    <SelectItem key={f.file_name} value={f.file_name}>
-                      {f.file_name.replace('.sqlite', '')} ({f.entry_count} entries)
-                    </SelectItem>
-                  ))
-                )}
-              </SelectContent>
-            </Select>
-            {selectedHistoryFile && (
-              <div className="flex items-center gap-1.5 rounded-full bg-purple-100/80 px-3 py-1 text-xs font-medium text-purple-700">
-                <svg width="10" height="10" viewBox="0 0 15 15" fill="none" xmlns="http://www.w3.org/2000/svg">
-                  <path d="M7.5 1.5C4.5 1.5 2 4 2 7.5C2 11 4.5 13.5 7.5 13.5C10.5 13.5 13 11 13 7.5C13 4 10.5 1.5 7.5 1.5Z" stroke="currentColor" strokeWidth="1.2"/>
-                  <path d="M7.5 5V8M7.5 10V9.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round"/>
-                </svg>
-                Past discrepancies will merge into results
-              </div>
-            )}
           </div>
-        </div>
+        ) : (
+          <div className="rounded-xl border border-purple-200 bg-gradient-to-br from-purple-50/70 via-white to-purple-50/30 px-5 py-4 shadow-sm transition-all duration-200 hover:shadow-md hover:border-purple-300">
+            <div className="flex items-center gap-4 flex-wrap">
+              <div className="flex items-center gap-2.5">
+                <div className="flex h-8 w-8 items-center justify-center rounded-full bg-purple-100 text-purple-600">
+                  <svg width="14" height="14" viewBox="0 0 15 15" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M7.5 1.5C4.5 1.5 2 4 2 7.5C2 11 4.5 13.5 7.5 13.5C10.5 13.5 13 11 13 7.5C13 4 10.5 1.5 7.5 1.5Z" stroke="currentColor" strokeWidth="1.2"/>
+                    <path d="M7.5 5V8M7.5 10V9.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round"/>
+                  </svg>
+                </div>
+                <label className="text-sm font-semibold text-purple-900 whitespace-nowrap">
+                  Open Maazi
+                </label>
+              </div>
+              <Select value={selectedCloudFile || null} onValueChange={(v) => setSelectedCloudFile(v ?? '')}>
+                <SelectTrigger className="min-w-[240px]">
+                  <SelectValue
+                    placeholder={
+                      cloudHistoryError
+                        ? 'Failed to load'
+                        : cloudFiles.length === 0
+                          ? 'No saved files'
+                          : 'Select a past reconciliation'
+                    }
+                  />
+                </SelectTrigger>
+                <SelectContent>
+                  {cloudHistoryError ? (
+                    <SelectItem value="__error__" disabled>
+                      {cloudHistoryError}
+                    </SelectItem>
+                  ) : cloudFiles.length === 0 ? (
+                    <SelectItem value="__none__" disabled>
+                      No history files found
+                    </SelectItem>
+                  ) : (
+                    cloudFiles.map(f => (
+                      <SelectItem key={f} value={f}>
+                        {f}
+                      </SelectItem>
+                    ))
+                  )}
+                </SelectContent>
+              </Select>
+              {cloudHistoryError && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={retryLoadCloudFiles}
+                  disabled={cloudHistoryLoading}
+                >
+                  {cloudHistoryLoading ? 'Retrying...' : 'Retry'}
+                </Button>
+              )}
+              {selectedCloudFile && !cloudHistoryError && (
+                <div className="flex items-center gap-1.5 rounded-full bg-purple-100/80 px-3 py-1 text-xs font-medium text-purple-700">
+                  <svg width="10" height="10" viewBox="0 0 15 15" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M7.5 1.5C4.5 1.5 2 4 2 7.5C2 11 4.5 13.5 7.5 13.5C10.5 13.5 13 11 13 7.5C13 4 10.5 1.5 7.5 1.5Z" stroke="currentColor" strokeWidth="1.2"/>
+                    <path d="M7.5 5V8M7.5 10V9.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round"/>
+                  </svg>
+                  Past discrepancies will merge into results
+                </div>
+              )}
+            </div>
+          </div>
+        )}
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           <div className="space-y-2">

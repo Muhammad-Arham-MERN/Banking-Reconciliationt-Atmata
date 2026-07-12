@@ -694,14 +694,14 @@ async def list_history():
 @router.post("/history/load")
 async def load_history(request: LoadHistoryRequest):
     """
-    Load discrepancy entries from a saved history file.
+    Load discrepancy entries from cloud database.
     Each entry includes category, transaction_details, transaction_date, debit_credit_amount,
     and from_past=True.
 
-    Returns 404 if the file is not found, 422 if the file is corrupted.
+    Returns 404 if the record is not found, 422 if the data is corrupted.
     """
     try:
-        result = history_service.load_history(request.file_name)
+        result = await history_service.load_history(request.file_name)
         logger.info(f"History loaded: {result['file_name']} with {result['entry_count']} entries")
         return result
     except FileNotFoundError as e:

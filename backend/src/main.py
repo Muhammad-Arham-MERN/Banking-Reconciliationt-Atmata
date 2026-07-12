@@ -11,6 +11,9 @@ import signal
 import asyncio
 from datetime import datetime, timezone
 from src.config import settings
+from dotenv import load_dotenv
+
+load_dotenv()
 
 # Configure logging
 logging.basicConfig(
@@ -47,6 +50,12 @@ async def lifespan(app: FastAPI):
     if not ensure_upload_directory():
         logger.error("Failed to create upload directory!")
         raise RuntimeError("Cannot start without upload directory")
+
+    # Initialize database connection and run migrations
+    from src.services.db_service import initialize_database
+
+    await initialize_database(dsn=settings.DATABASE_URL)
+    logger.info("✅ Database initialized and migrations applied")
 
     # Clean up any orphaned files from previous runs
     orphaned_count = cleanup_old_files(max_age_minutes=settings.FILE_RETENTION_MINUTES)
@@ -148,12 +157,16 @@ async def log_requests(request, call_next):
 
 # Import API routes and middleware
 from src.api.routes import router as api_router
+from src.api.cloud_routes import router as cloud_router
 from src.api.middleware import rate_limit_middleware, security_middleware
+from src.api.auth_middleware import auth_middleware
 
 # Include API routes
 app.include_router(api_router, tags=["api"])
+app.include_router(cloud_router)
 
-# Add security middleware
+# Add security middleware (order: auth first, then security, then rate-limit)
+app.middleware("http")(auth_middleware)
 app.middleware("http")(security_middleware)
 app.middleware("http")(rate_limit_middleware)
 

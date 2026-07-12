@@ -41,6 +41,10 @@ class Settings(BaseSettings):
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     ]
 
+    # Authentication
+    NEXTAUTH_SECRET: str = ""
+    DATABASE_URL: str = ""
+
     # Logging
     LOG_LEVEL: str = "INFO"
 

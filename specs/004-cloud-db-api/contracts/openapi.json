@@ -1,0 +1,163 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Cloud Database API — File Info Endpoints",
+    "version": "1.0.0",
+    "description": "GET and POST endpoints for retrieving and storing cloud-based reconciliation file data."
+  },
+  "paths": {
+    "/get_file_info": {
+      "get": {
+        "summary": "Retrieve authenticated user's stored file names",
+        "description": "Returns the list of file names from the authenticated user's `files` column. These reference records in the `reconciliation_data` table.",
+        "operationId": "getFileInfo",
+        "security": [{"BearerAuth": []}],
+        "responses": {
+          "200": {
+            "description": "List of stored file names",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["files"],
+                  "properties": {
+                    "files": {
+                      "type": "array",
+                      "items": {"type": "string"},
+                      "description": "File names referencing reconciliation_data records"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {"$ref": "#/components/responses/Unauthorized"},
+          "500": {"$ref": "#/components/responses/InternalError"}
+        }
+      }
+    },
+    "/update_file_info": {
+      "post": {
+        "summary": "Save or update reconciliation data for a file",
+        "description": "Upserts a reconciliation record identified by `file_name`. If the file_name already exists for the user, the record is overwritten. If new, it is created. The user's `files` index is updated accordingly.",
+        "operationId": "updateFileInfo",
+        "security": [{"BearerAuth": []}],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["file_name", "file_data"],
+                "properties": {
+                  "file_name": {
+                    "type": "string",
+                    "description": "Unique name identifying this reconciliation file",
+                    "maxLength": 255
+                  },
+                  "file_data": {
+                    "type": "array",
+                    "description": "List of reconciliation data entries",
+                    "items": {
+                      "type": "object",
+                      "required": ["name", "description", "debit_credit_value", "category"],
+                      "properties": {
+                        "name": {"type": "string"},
+                        "description": {"type": "string"},
+                        "debit_credit_value": {"type": "number", "format": "double"},
+                        "category": {"type": "string"}
+                      },
+                      "additionalProperties": true
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Record upserted successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["status", "file_name"],
+                  "properties": {
+                    "status": {"type": "string", "enum": ["success"]},
+                    "file_name": {"type": "string"},
+                    "message": {"type": "string"}
+                  }
+                }
+              }
+            }
+          },
+          "422": {"$ref": "#/components/responses/ValidationError"},
+          "401": {"$ref": "#/components/responses/Unauthorized"},
+          "500": {"$ref": "#/components/responses/InternalError"}
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "BearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT",
+        "description": "Auth.js JWT token — verified against NEXTAUTH_SECRET"
+      }
+    },
+    "responses": {
+      "Unauthorized": {
+        "description": "Missing or invalid authentication token",
+        "content": {
+          "application/json": {
+            "schema": {
+              "type": "object",
+              "properties": {
+                "detail": {"type": "string", "example": "Not authenticated"}
+              }
+            }
+          }
+        }
+      },
+      "ValidationError": {
+        "description": "Request body validation error",
+        "content": {
+          "application/json": {
+            "schema": {
+              "type": "object",
+              "properties": {
+                "detail": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "loc": {"type": "array", "items": {"type": "string"}},
+                      "msg": {"type": "string"},
+                      "type": {"type": "string"}
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "InternalError": {
+        "description": "Internal server error",
+        "content": {
+          "application/json": {
+            "schema": {
+              "type": "object",
+              "properties": {
+                "detail": {"type": "string", "example": "Internal server error"}
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
