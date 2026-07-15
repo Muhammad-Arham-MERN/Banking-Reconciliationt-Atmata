@@ -41,6 +41,9 @@ class Settings(BaseSettings):
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     ]
 
+    # CORS
+    CORS_ORIGINS: str = "http://localhost:3000"  # Comma-separated list of allowed origins
+
     # Authentication
     NEXTAUTH_SECRET: str = ""
     DATABASE_URL: str = ""

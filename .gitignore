@@ -71,5 +71,14 @@ htmlcov/
 tmp/
 assets_dev/
 
+# CommandCode
+.commandcode/
+
+# Windows shortcuts
+*.lnk
+
+# Miscellaneous junk
+$null
+
 # Reconciliation history
 Reconciliation History/
