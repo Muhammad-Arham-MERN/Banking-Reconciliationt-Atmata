@@ -3,6 +3,7 @@ import NextAuth from "next-auth";
 import PostgresAdapter from "@auth/pg-adapter";
 import { Pool } from "pg";
 import { authConfig } from "./auth.config";
+import type { Session } from "next-auth";
 
 const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS users (
@@ -41,7 +42,11 @@ CREATE TABLE IF NOT EXISTS verification_token (
 `;
 
 async function ensureDatabase(): Promise<Pool> {
-  const url = new URL(process.env.DATABASE_URL || "");
+  const dbUrl = process.env.DATABASE_URL;
+  if (!dbUrl) {
+    throw new Error("DATABASE_URL environment variable is required but not set");
+  }
+  const url = new URL(dbUrl);
   const dbName = url.pathname.replace(/^\//, "") || "defaultdb";
 
   // Connect without specifying a database to check/create it
@@ -73,10 +78,45 @@ async function ensureDatabase(): Promise<Pool> {
   return pool;
 }
 
-const pool = await ensureDatabase();
+let _instance: {
+  auth: () => Promise<Session | null>;
+  handlers: { GET: (req: any) => Promise<Response>; POST: (req: any) => Promise<Response> };
+  signIn: (...args: any[]) => any;
+  signOut: (...args: any[]) => any;
+} | null = null;
+let _promise: Promise<void> | null = null;
 
-export const { handlers, auth, signIn, signOut } = NextAuth({
-  ...authConfig,
-  adapter: PostgresAdapter(pool),
+async function getAuth() {
+  if (!_promise) {
+    _promise = (async () => {
+      const pool = await ensureDatabase();
+      const result = NextAuth({ ...authConfig, adapter: PostgresAdapter(pool) });
+      _instance = {
+        auth: () => result.auth() as Promise<Session | null>,
+        handlers: result.handlers,
+        signIn: result.signIn,
+        signOut: result.signOut,
+      };
+    })();
+  }
+  await _promise;
+  return _instance!;
+}
+
+export async function auth(): Promise<Session | null> {
+  const instance = await getAuth();
+  return instance.auth();
+}
+
+export const handlers = new Proxy({} as {
+  GET: (req: any) => Promise<Response>;
+  POST: (req: any) => Promise<Response>;
+}, {
+  get(_, prop) {
+    return (...args: any[]) => getAuth().then(i => (i.handlers as any)[prop](...args));
+  },
 });
+
+export const signIn = (...args: any[]) => getAuth().then(i => i.signIn(...args));
+export const signOut = (...args: any[]) => getAuth().then(i => i.signOut(...args));
 /** وَإِنَّ اللَّهَ لَهُوَ خَيْرُ الرَّازِقِينَ */

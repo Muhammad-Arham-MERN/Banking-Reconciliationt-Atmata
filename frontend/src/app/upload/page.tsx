@@ -1,6 +1,8 @@
 /** بِسْمِ اللَّهِ الرَّحْمٰنِ الرَّحِيمِ */
 import { auth } from "@/lib/auth";
 import { redirect } from "next/navigation";
+
+export const dynamic = "force-dynamic";
 import { UploadForm } from "../../components/upload/UploadForm";
 
 export default async function UploadPage() {

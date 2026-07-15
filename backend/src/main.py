@@ -114,10 +114,10 @@ app = FastAPI(
     redoc_url="/redoc"
 )
 
-# Configure CORS - Consistency Pattern: Must match frontend origin
+# Configure CORS - Dynamically from settings (comma-separated env var)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],  # Frontend development URL
+    allow_origins=[origin.strip() for origin in settings.CORS_ORIGINS.split(",")],
     allow_credentials=True,
     allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["*"],

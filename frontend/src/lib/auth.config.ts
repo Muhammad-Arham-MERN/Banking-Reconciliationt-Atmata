@@ -17,6 +17,7 @@ async function createAccessToken(sub: string, email?: string): Promise<string> {
 }
 
 export const authConfig: NextAuthConfig = {
+  trustHost: true,
   providers: [Google],
   session: {
     strategy: "jwt",
@@ -28,7 +29,7 @@ export const authConfig: NextAuthConfig = {
   callbacks: {
     async jwt({ token, profile }) {
       if (token.sub && !token.access_token) {
-        token.access_token = await createAccessToken(token.sub, token.email || profile?.email);
+        token.access_token = await createAccessToken(token.sub, token.email ?? profile?.email ?? undefined);
       }
       return token;
     },
