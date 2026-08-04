@@ -32,9 +32,17 @@ class ReconciliationService:
         """
         start_time = time.time()
 
+        # Shared 1:1 consumption tracking: a bank entry that matches a company
+        # entry consumes that company entry, and vice versa. Each entry can
+        # only be consumed once, so a single amount is never reused to cancel
+        # multiple rows on the other side. When a pair is found, both members
+        # are removed together.
+        company_used = [False] * len(company_transactions)
+        bank_used = [False] * len(bank_transactions)
+
         # Find discrepancies from both sources
-        bank_discrepancies = self._find_bank_discrepancies(bank_transactions, company_transactions)
-        company_discrepancies = self._find_company_discrepancies(company_transactions, bank_transactions)
+        bank_discrepancies = self._find_bank_discrepancies(bank_transactions, company_transactions, company_used, bank_used)
+        company_discrepancies = self._find_company_discrepancies(company_transactions, bank_transactions, company_used, bank_used)
 
         # Remove opposite sign pairs
         final_discrepancies = self._remove_opposite_pairs(bank_discrepancies, company_discrepancies)
@@ -44,22 +52,30 @@ class ReconciliationService:
 
     def _find_bank_discrepancies(self,
                                 bank_transactions: List[Dict[str, Any]],
-                                company_transactions: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+                                company_transactions: List[Dict[str, Any]],
+                                company_used: List[bool],
+                                bank_used: List[bool]) -> List[Dict[str, Any]]:
         """
         Find bank transactions that don't have a matching amount in company records.
-        Matching based ONLY on amount: bank_amount == company_amount
+        Matching based ONLY on amount: bank_amount == company_amount.
+        When a match is found, the company entry is marked as consumed so it is
+        removed together with this bank entry and cannot be reused.
         """
         discrepancies = []
 
-        for bank_tx in bank_transactions:
+        for b_idx, bank_tx in enumerate(bank_transactions):
             matched = False
             bank_amount = bank_tx.get('Debit/Credit', 0.0)
 
             # Look for matching amount in company transactions
-            for company_tx in company_transactions:
+            for i, company_tx in enumerate(company_transactions):
+                if company_used[i]:
+                    continue  # Already consumed by a previous pair
                 company_amount = company_tx.get('Debit/Credit', 0.0)
 
                 if self._amounts_match(bank_amount, company_amount):
+                    company_used[i] = True  # Consume the company entry (pair removed)
+                    bank_used[b_idx] = True  # Consume this bank entry too
                     matched = True
                     break  # Early termination optimization
 
@@ -73,19 +89,27 @@ class ReconciliationService:
 
     def _find_company_discrepancies(self,
                                    company_transactions: List[Dict[str, Any]],
-                                   bank_transactions: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+                                   bank_transactions: List[Dict[str, Any]],
+                                   company_used: List[bool],
+                                   bank_used: List[bool]) -> List[Dict[str, Any]]:
         """
         Find company transactions that don't have a matching amount in bank statement.
-        Matching based ONLY on amount: company_amount == bank_amount
+        Matching based ONLY on amount: company_amount == bank_amount.
+        Entries already consumed by a bank pair are skipped, so the bank entry
+        is never reused to cancel multiple company rows.
         """
         discrepancies = []
 
-        for company_tx in company_transactions:
+        for i, company_tx in enumerate(company_transactions):
+            if company_used[i]:
+                continue  # Already removed together with its bank pair
             matched = False
             company_amount = company_tx.get('Debit/Credit', 0.0)
 
             # Look for matching amount in bank transactions
-            for bank_tx in bank_transactions:
+            for b_idx, bank_tx in enumerate(bank_transactions):
+                if bank_used[b_idx]:
+                    continue  # Already consumed by a previous pair
                 bank_amount = bank_tx.get('Debit/Credit', 0.0)
 
                 if self._amounts_match(company_amount, bank_amount):
