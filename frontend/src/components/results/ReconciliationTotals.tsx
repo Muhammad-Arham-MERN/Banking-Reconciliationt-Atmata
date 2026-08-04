@@ -68,10 +68,10 @@ function useTotalsCalculation(
 
     // DISPLAY adjustments with enforced sign convention per the accounting rules:
     //   - Unpresented Checks:           always negative (Company debits not yet presented)
-    //   - Uncleared Checks:             always negative (Company credits not yet cleared)
+    //   - Uncleared Checks:             always positive (Company credits not yet cleared)
     //   - Bank Credited Not Debited:    always negative (Bank credits not in cash book)
     //   - Bank Debited Not Credited:    always positive (Bank debits not in cash book)
-    const displayUnclearedChecks = -Math.abs(unclearedChecks);
+    const displayUnclearedChecks = Math.abs(unclearedChecks);
     const displayUnpresentedChecks = -Math.abs(unpresentedChecks);
     const displayBankCreditedNotDebited = -Math.abs(bankCreditedNotDebited);
     const displayBankDebitedNotCredited = Math.abs(bankDebitedNotCredited);

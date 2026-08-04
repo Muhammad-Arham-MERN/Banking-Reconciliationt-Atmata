@@ -62,18 +62,7 @@ Install-Missing -Label "Python" -DetectCmd "python3" -WingetId "Python.Python.3.
 # ── 2. Node.js ──────────────────────────────────────────────────────────────
 Install-Missing -Label "Node.js" -DetectCmd "node" -WingetId "OpenJS.NodeJS.LTS"
 
-# ── 3. Java (temurin JRE – required by tabula-py for PDF parsing) ───────────
-$javaHome = $env:JAVA_HOME
-$javaOk = $false
-if ($javaHome -and (Test-Path "$javaHome\bin\java.exe")) { $javaOk = $true }
-if (-not $javaOk) {
-    try { $null = Get-Command java -ErrorAction Stop; $javaOk = $true } catch { }
-}
-if (-not $javaOk) {
-    Install-Missing -Label "Java JRE" -DetectCmd "java" -WingetId "EclipseAdoptium.Temurin.21.JRE"
-}
-
-# ── 4. Refresh environment variables ────────────────────────────────────────
+# ── 3. Refresh environment variables ────────────────────────────────────────
 if ($NeedsRefresh) {
     Write-Host "» Refreshing environment variables..." -ForegroundColor Yellow
     # Reload PATH from registry for the current process

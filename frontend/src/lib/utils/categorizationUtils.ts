@@ -29,9 +29,11 @@ export function categorizeTransaction(
   const isPositive = value > 0;
 
   if (isBank && isPositive) {
+    // Bank credit (money in) — not recorded in company cash book
     return TransactionCategory.BANK_CREDITED_NOT_DEBITED;
   }
   if (isBank && !isPositive) {
+    // Bank debit (money out) — not recorded in company cash book
     return TransactionCategory.BANK_DEBITED_NOT_CREDITED;
   }
   if (!isBank && isPositive) {
@@ -72,7 +74,7 @@ export function generateItemId(
  *
  * Sign convention per category:
  *   - UNPRESENTED_CHECKS:  always negative (Company debits not yet presented)
- *   - UNCLEARED_CHECKS:    always negative (Company credits not yet cleared)
+ *   - UNCLEARED_CHECKS:    always positive (Company credits not yet cleared)
  *   - BANK_CREDITED_NOT_DEBITED: always negative (Bank credits not in cash book)
  *   - BANK_DEBITED_NOT_CREDITED: always positive (Bank debits not in cash book)
  *
@@ -89,9 +91,9 @@ export function getDisplayAmount(
   if (category) {
     switch (category) {
       case TransactionCategory.UNPRESENTED_CHECKS:
-      case TransactionCategory.UNCLEARED_CHECKS:
       case TransactionCategory.BANK_CREDITED_NOT_DEBITED:
         return -Math.abs(rawAmount);       // Always negative
+      case TransactionCategory.UNCLEARED_CHECKS:
       case TransactionCategory.BANK_DEBITED_NOT_CREDITED:
         return Math.abs(rawAmount);         // Always positive
     }

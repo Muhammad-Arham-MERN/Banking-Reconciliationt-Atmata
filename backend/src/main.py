@@ -43,6 +43,10 @@ async def lifespan(app: FastAPI):
     logger.info(f"Max PDF size: {settings.MAX_PDF_SIZE / (1024*1024):.0f}MB")
     logger.info(f"Max Excel size: {settings.MAX_EXCEL_SIZE / (1024*1024):.0f}MB")
     logger.info(f"File retention: {settings.FILE_RETENTION_MINUTES} minutes (automatic cleanup)")
+    logger.info("-" * 50)
+    logger.info(f"CORS_ORIGINS: {repr(settings.CORS_ORIGINS)}")
+    logger.info(f"Parsed origins: {[origin.strip() for origin in settings.CORS_ORIGINS.split(',')]}")
+    logger.info("-" * 50)
 
     # Ensure upload directory exists and is writable
     from src.utils.file_helpers import ensure_upload_directory, cleanup_old_files
@@ -115,9 +119,10 @@ app = FastAPI(
 )
 
 # Configure CORS - Dynamically from settings (comma-separated env var)
+# origin.strip() for origin in settings.CORS_ORIGINS.split(",")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[origin.strip() for origin in settings.CORS_ORIGINS.split(",")],
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["*"],
