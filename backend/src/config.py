@@ -42,7 +42,7 @@ class Settings(BaseSettings):
     ]
 
     # CORS
-    CORS_ORIGINS: str = "http://localhost:3000"  # Comma-separated list of allowed origins
+    CORS_ORIGINS: str = "http://localhost:3000,https://banking-reconciliationt-atmata.vercel.app"  # Comma-separated list of allowed origins
 
     # Authentication
     NEXTAUTH_SECRET: str = ""

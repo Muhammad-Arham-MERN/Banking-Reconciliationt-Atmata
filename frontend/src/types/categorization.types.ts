@@ -34,11 +34,11 @@ export enum TransactionCategory {
   /** Company records with positive values - checks received but not yet cleared */
   UNCLEARED_CHECKS = "UNCLEARED CHECKS",
 
-  /** Bank statement entries with positive values - debits not recorded in company cash book */
-  BANK_DEBITED_NOT_CREDITED = "BANK DEBITED BUT NOT CREDITED IN CASH BOOK",
+  /** Bank statement entries with positive values (credit, money in) - not recorded in company cash book */
+  BANK_CREDITED_NOT_DEBITED = "BANK CREDITED BUT NOT DEBITED IN CASH BOOK",
 
-  /** Bank statement entries with negative values - credits not recorded in company cash book */
-  BANK_CREDITED_NOT_DEBITED = "BANK CREDITED BUT NOT DEBITED IN CASH BOOK"
+  /** Bank statement entries with negative values (debit, money out) - not recorded in company cash book */
+  BANK_DEBITED_NOT_CREDITED = "BANK DEBITED BUT NOT CREDITED IN CASH BOOK"
 }
 
 // ============================================================================

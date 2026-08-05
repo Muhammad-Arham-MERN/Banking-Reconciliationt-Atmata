@@ -1,15 +1,15 @@
 # بِسْمِ اللّٰهِ الرَّحْمٰنِ الرَّحِيمِ
 """
 PDF Processing Service
-Extract transaction data from PDF bank statements using tabula-py
-Following test.py pattern with positional column mapping
+Extract transaction data from PDF bank statements
+Uses layout-based column slicing via pdfplumber with explicit column boundaries
 """
 import re
 import logging
 from pathlib import Path
 from typing import Dict, Any, List, Optional
 import pandas as pd
-import tabula
+import pdfplumber
 
 from src.utils.data_transformers import (
     normalize_pdf_date,
@@ -24,68 +24,80 @@ from src.utils.error_handlers import PDFProcessingError
 logger = logging.getLogger(__name__)
 
 # وَهُوَ عَلَى كُلِّ شَيْءٍ قَدِيرٌ
-# ==================== Helper Functions from test.py Pattern ====================
+# ==================== Helper Functions ====================
 
-def _process_raw_table(raw: pd.DataFrame | str) -> pd.DataFrame:
-    """Skip header rows, map columns, and keep valid transaction rows."""
-    # Handle case where tabula returns strings instead of DataFrames
-    if not isinstance(raw, pd.DataFrame):
+# Column boundary x-coordinates (in PDF points) measured from the bank statement
+# template. These are the physical column edges of the layout; slicing words by
+# these lines is deterministic and independent of whitespace inference,
+# which can merge/split columns differently across pages of the same statement.
+# Page width for this statement is 612 points.
+COLUMN_BOUNDARIES = [45.0, 89.0, 195.0, 246.0, 298.0, 348.0, 440.0, 500.0, 570.0]
+
+# Vertical band (in PDF points) that contains the transaction rows. Everything
+# above is the account header, everything below is the summary/footer.
+TRANSACTION_BAND_TOP = 170.0
+TRANSACTION_BAND_BOTTOM = 765.0
+
+
+def _slice_words_to_columns(words: list[dict]) -> list[str]:
+    """Assign words to the 10 physical columns by their horizontal center."""
+    cells = ["" for _ in range(len(COLUMN_BOUNDARIES) + 1)]
+    for w in words:
+        cx = (w["x0"] + w["x1"]) / 2
+        idx = sum(1 for b in COLUMN_BOUNDARIES if cx > b)
+        if idx < len(cells):
+            cells[idx] = (cells[idx] + " " + w["text"]).strip()
+    return cells
+
+
+def _extract_rows_via_layout(pdf_path: str) -> pd.DataFrame:
+    """Extract transaction rows by slicing words at explicit column boundaries.
+
+    Uses pdfplumber to get word-level geometry, then assigns each word to one of
+    the 10 physical columns by its x-center. This is robust to whitespace
+    inference, which can merge/split columns differently across pages.
+    """
+    rows = []
+    with pdfplumber.open(pdf_path) as pdf:
+        for page in pdf.pages:
+            words = page.extract_words()
+            # Group words into visual lines by their top coordinate
+            lines: dict[float, list[dict]] = {}
+            for w in words:
+                if TRANSACTION_BAND_TOP <= w["top"] <= TRANSACTION_BAND_BOTTOM:
+                    lines.setdefault(round(w["top"], 1), []).append(w)
+
+            for top in sorted(lines):
+                cells = _slice_words_to_columns(lines[top])
+                # Keep only transaction rows: first column is a statement date
+                if re.match(DATE_PATTERN, cells[0]):
+                    rows.append(
+                        {
+                            "Tran. Date": cells[0],
+                            "Effect Date": cells[1],
+                            "Tran. Narrative": cells[2],
+                            "Remitter IBAN": cells[3],
+                            "Remitter Bank": cells[4],
+                            "Chq / Ref No": cells[6],
+                            "Debit": cells[7],
+                            "Credit": cells[8],
+                            "Balance": cells[9],
+                        }
+                    )
+
+    if not rows:
         return pd.DataFrame()
 
-    if raw.empty or len(raw) <= 3:
-        return pd.DataFrame()
+    df = pd.DataFrame(rows)
 
-    df = raw.iloc[3:].copy()
-    df.columns = CANONICAL_COLUMNS
-    df = df.drop(columns=["_unused_1", "_unused_2"])
-
+    # Split the merged "Tran. Br. + Transaction Details" column (branch code prefix)
     branch_and_details = df["Tran. Narrative"].astype(str).str.extract(
         BRANCH_NARRATIVE_PATTERN
     )
     df["Tran. Br."] = branch_and_details[0]
     df["Transaction Details"] = branch_and_details[1]
 
-    return df[df["Tran. Date"].astype(str).str.match(DATE_PATTERN, na=False)]
-
-
-def _process_area_fallback_table(raw: pd.DataFrame | str) -> pd.DataFrame:
-    """Parse tabula area-extracted rows where columns collapse on continuation pages."""
-    # Handle case where tabula returns strings instead of DataFrames
-    if not isinstance(raw, pd.DataFrame):
-        return pd.DataFrame()
-
-    rows = []
-    for _, row in raw.iterrows():
-        header = str(row.iloc[0] or "").strip()
-        header_match = AREA_ROW_PATTERN.match(header)
-        if not header_match:
-            continue
-
-        tran_date, effect_date, narrative = header_match.groups()
-        amount_cell = str(row.iloc[4] if len(row) > 4 else "").strip()
-        amount_match = REF_AMOUNT_PATTERN.match(amount_cell)
-        if not amount_match:
-            continue
-
-        chq_ref, debit = amount_match.groups()
-        branch_match = BRANCH_NARRATIVE_PATTERN.match(narrative)
-        rows.append(
-            {
-                "Tran. Date": tran_date,
-                "Effect Date": effect_date,
-                "Tran. Narrative": narrative,
-                "Remitter IBAN": pd.NA,
-                "Remitter Bank": pd.NA,
-                "Chq / Ref No": chq_ref,
-                "Debit": debit,
-                "Credit": pd.NA,
-                "Balance": row.iloc[5] if len(row) > 5 else pd.NA,
-                "Tran. Br.": branch_match.group(1) if branch_match else pd.NA,
-                "Transaction Details": branch_match.group(2) if branch_match else narrative,
-            }
-        )
-
-    return pd.DataFrame(rows)
+    return df
 
 
 def _dedupe_transactions(df: pd.DataFrame) -> pd.DataFrame:
@@ -98,41 +110,7 @@ def _dedupe_transactions(df: pd.DataFrame) -> pd.DataFrame:
     ).reset_index(drop=True)
 
 
-def _extract_continuation_pages(pdf_path: str) -> list[pd.DataFrame]:
-    """Extract transactions from page 2+ when stream mode truncates at a page break."""
-    continuation = []
-    page = 2
-    max_pages = 50  # Safety limit
-
-    while page <= max_pages:
-        try:
-            tables = tabula.read_pdf(pdf_path, pages=str(page), **AREA_EXTRACTION)
-        except Exception:
-            break
-        page_dfs = [_process_area_fallback_table(raw) for raw in tables]
-        page_dfs = [df for df in page_dfs if not df.empty]
-        if not page_dfs:
-            break
-        continuation.extend(page_dfs)
-        page += 1
-    return continuation
-
-# ==================== Constants from test.py Pattern ====================
-
-# Tabula merges several PDF header cells into one column name. Map by position instead.
-CANONICAL_COLUMNS = [
-    "Tran. Date",
-    "Effect Date",
-    "Tran. Narrative",  # merged: Tran. Br. + Transaction Details + Remitter Name in PDF
-    "_unused_1",
-    "Remitter IBAN",
-    "Remitter Bank",
-    "Chq / Ref No",
-    "Debit",
-    "Credit",
-    "_unused_2",
-    "Balance",
-]
+# ==================== Constants ====================
 
 # Date pattern for PDF bank statements
 DATE_PATTERN = re.compile(r"^\d{2}-[A-Z]{3}-\d{2}$")
@@ -140,26 +118,13 @@ DATE_PATTERN = re.compile(r"^\d{2}-[A-Z]{3}-\d{2}$")
 # Pattern to extract branch and narrative from merged column
 BRANCH_NARRATIVE_PATTERN = re.compile(r"^(\d{4})\s+(.+)$")
 
-# Page 2+ continuation rows: tabula stream mode merges page 1 but truncates the tail
-AREA_ROW_PATTERN = re.compile(
-    r"^(\d{2}-[A-Z]{3}-\d{2})\s+(\d{2}-[A-Z]{3}-\d{2})\s+(.+)$"
-)
-REF_AMOUNT_PATTERN = re.compile(r"^(\d+)\s+([\d,]+\.\d{2})$")
-AREA_EXTRACTION = {
-    "area": [5, 0, 95, 100],
-    "relative_area": True,
-    "stream": True,
-    "pandas_options": {"header": None},
-    "multiple_tables": True,
-}
-
 
 # ==================== PDF Processor Class ====================
 
 class PDFProcessor:
     """
     Process PDF bank statements to extract transaction data
-    Following test.py pattern with tabula-py integration
+    Uses layout-based column slicing via pdfplumber
     """
 
     def __init__(self, request_id: str = "unknown"):
@@ -175,7 +140,9 @@ class PDFProcessor:
     def extract_bank_statement(self, pdf_path: Path) -> pd.DataFrame:
         """
         Extract transaction data from PDF bank statement
-        Following test.py pattern: tabula.read_pdf, column mapping, branch/narrative extraction
+        Uses layout-based slicing: words are cut at the statement's physical
+        column boundaries (see COLUMN_BOUNDARIES), independent of whitespace
+        inference.
 
         Args:
             pdf_path: Path to PDF file
@@ -197,52 +164,26 @@ class PDFProcessor:
                     details={"file_path": str(pdf_path)}
                 )
 
-            # Extract tables from all pages using multiple_tables mode
-            tables = tabula.read_pdf(str(pdf_path), pages="all", multiple_tables=True)
+            # Extract transaction rows by slicing words at explicit column boundaries
+            df = _extract_rows_via_layout(str(pdf_path))
 
-            if not tables:
+            if df.empty:
                 raise PDFProcessingError(
-                    f"PDF file does not contain extractable transaction table",
+                    f"No valid transaction data found in PDF",
                     details={"pdf_path": str(pdf_path)},
                     error_type="no_transactions"
                 )
 
-            logger.info(f"Tabula found {len(tables)} table(s)")
-            for i, raw in enumerate(tables):
-                if isinstance(raw, pd.DataFrame):
-                    logger.info(f"  table {i + 1}: {raw.shape[0]} rows x {raw.shape[1]} cols")
-                else:
-                    logger.info(f"  table {i + 1}: {type(raw).__name__} (skipped)")
-
-            # Process main tables using helper function
-            processed = [_process_raw_table(raw) for raw in tables]
-
-            # Extract continuation pages (page 2+) using area extraction fallback
-            continuation_pages = _extract_continuation_pages(str(pdf_path))
-            processed.extend(continuation_pages)
-
-            # Filter out empty DataFrames
-            processed = [df for df in processed if not df.empty]
-
-            if not processed:
-                raise PDFProcessingError(
-                    f"No valid transaction data found in any table from PDF",
-                    details={"pdf_path": str(pdf_path), "tables_found": len(tables)},
-                    error_type="no_transactions"
-                )
-
-            # Combine all processed tables and deduplicate
-            df = _dedupe_transactions(pd.concat(processed, ignore_index=True))
-            logger.info(f"Combined {len(processed)} tables with total {len(df)} unique transactions")
-
-            # Reset index (already done by _dedupe_transactions)
-            df = df.reset_index(drop=True)
+            # Deduplicate identical transactions
+            df = _dedupe_transactions(df)
+            logger.info(f"Extracted {len(df)} unique transactions")
 
             processing_time_ms = int((time.time() - start_time) * 1000)
 
             # Log extraction statistics
-            pages_processed = len(tables)
-            tables_extracted = len(tables)
+            with pdfplumber.open(str(pdf_path)) as pdf:
+                pages_processed = len(pdf.pages)
+            tables_extracted = 1
             rows_extracted = len(df)
 
             log_pdf_extraction(
@@ -397,7 +338,7 @@ class PDFProcessor:
             df = self.extract_bank_statement(pdf_path)
 
             # Extract last Balance column value from raw DataFrame
-            # Balance is at column index 10 in CANONICAL_COLUMNS (named "Balance")
+            # Balance is the final column sliced by the layout boundaries
             bank_net_total = {"value": None, "status": "missing"}
             if not df.empty and "Balance" in df.columns:
                 # Drop rows where Balance is NaN/None before getting last

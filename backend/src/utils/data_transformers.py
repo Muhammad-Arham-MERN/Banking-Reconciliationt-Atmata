@@ -196,6 +196,13 @@ def merge_debit_credit(debit_value: Optional[float], credit_value: Optional[floa
         if pd.isna(credit_value):
             credit_value = None
 
+        # Treat blank/whitespace strings as missing (e.g. layout extractor
+        # produces "" for empty cells)
+        if isinstance(debit_value, str) and not debit_value.strip():
+            debit_value = None
+        if isinstance(credit_value, str) and not credit_value.strip():
+            credit_value = None
+
         # Both None - invalid
         if debit_value is None and credit_value is None:
             logger.warning("Both debit and credit are None/missing")
