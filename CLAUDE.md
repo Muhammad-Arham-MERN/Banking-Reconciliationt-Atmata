@@ -254,3 +254,16 @@ Automated reconciliation system that:
 - Bookkeepers
 - Small to medium business finance teams
 - Anyone performing regular bank reconciliation tasks
+
+## Active Technologies
+
+- Python 3.11 (backend, FastAPI) + TypeScript/Next.js 14 (frontend, App Router) (005-ai-data-extraction)
+- `openai-agents` (OpenAI Agents SDK), `litellm` (model provider abstraction), `pdfplumber`, `pandas`/`openpyxl`, `pydantic`, `fastapi`, `python-multipart`, `asyncio` (005-ai-data-extraction)
+- Existing temporary upload directory (`uploads/`, 20-min retention) + existing history storage (unchanged) (005-ai-data-extraction)
+
+## Recent Changes
+
+- 005-ai-data-extraction: Added Python 3.11 (backend, FastAPI); TypeScript/Next.js 14 (frontend, App Router)
+- 005-ai-data-extraction: Added `openai-agents` (OpenAI Agents SDK), `litellm` (model provider abstraction, already referenced in test.py), `pdfplumber` (PDF word geometry + extraction), `pandas`/`openpyxl` (Excel), `pydantic` (response parsing), `fastapi`, `python-multipart` (uploads), `asyncio` (parallel detection)
+
+**Last updated**: 2026-08-06

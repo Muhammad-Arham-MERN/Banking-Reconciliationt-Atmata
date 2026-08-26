@@ -96,6 +96,7 @@ class ReconciliationSummary(BaseModel):
     bank_only_discrepancies: int = Field(..., description="Number of discrepancies only in bank statement")
     company_only_discrepancies: int = Field(..., description="Number of discrepancies only in company records")
     opposite_pairs_removed: int = Field(..., description="Number of opposite sign pairs removed")
+    pair_mate_pairs_removed: int = Field(0, description="Number of same-date opposite-sign pairs removed by the pair-mate filter")
     processing_duration_ms: int = Field(..., description="Total processing time in milliseconds")
     pdf_processing_time_ms: int = Field(..., description="PDF processing time in milliseconds")
     excel_processing_time_ms: int = Field(..., description="Excel processing time in milliseconds")

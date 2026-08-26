@@ -48,12 +48,30 @@ class Settings(BaseSettings):
     NEXTAUTH_SECRET: str = ""
     DATABASE_URL: str = ""
 
+    # AI Structure Detection (Istikhraj e Data Ma'a AI)
+    # Model id (LiteLLM-prefixed, e.g. "gemini/gemini-2.0-flash") and provider
+    # API key. Never hardcoded - driven by environment variables (FR-010).
+    AI_MODEL: str = ""
+    AI_API_KEY: str = ""
+    # Optional: dedicated API key for OpenAI Agents SDK trace export. When empty,
+    # the SDK falls back to OPENAI_API_KEY / its own default.
+    AI_TRACING_API_KEY: str = ""
+
+    # Guardrail verdict layer (output validation loop)
+    # Model id (LiteLLM-prefixed, e.g. "openrouter/dots-studio/dots-3-note-preview:free")
+    # used for the structured LLM verdict on the agent's final structure output.
+    # When empty, the guardrail uses the deterministic assessor alone.
+    AI_GUARDRAIL_MODEL: str = "openrouter/dots-studio/dots-3-note-preview:free"
+    AI_GUARDRAIL_API_KEY: str = ""
+    AI_GUARDRAIL_BASE_URL: str = "https://openrouter.ai/api/v1"
+
     # Logging
     LOG_LEVEL: str = "INFO"
 
     class Config:
         env_file = ".env"
         case_sensitive = False
+        extra = "ignore"
 
 # وَهُوَ عَلَى كُلِّ شَيْءٍ قَدِيرٌ
 # Create global settings instance

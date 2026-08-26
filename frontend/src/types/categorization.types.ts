@@ -38,7 +38,13 @@ export enum TransactionCategory {
   BANK_CREDITED_NOT_DEBITED = "BANK CREDITED BUT NOT DEBITED IN CASH BOOK",
 
   /** Bank statement entries with negative values (debit, money out) - not recorded in company cash book */
-  BANK_DEBITED_NOT_CREDITED = "BANK DEBITED BUT NOT CREDITED IN CASH BOOK"
+  BANK_DEBITED_NOT_CREDITED = "BANK DEBITED BUT NOT CREDITED IN CASH BOOK",
+
+  /** Vendor ledger entries with positive values - not recorded in company cash book */
+  VENDOR_CREDITED_NOT_DEBITED = "VENDOR CREDITED BUT NOT DEBITED IN CASH BOOK",
+
+  /** Vendor ledger entries with negative values - not recorded in company cash book */
+  VENDOR_DEBITED_NOT_CREDITED = "VENDOR DEBITED BUT NOT CREDITED IN CASH BOOK"
 }
 
 // ============================================================================
@@ -198,7 +204,9 @@ export const EMPTY_SELECTION_STATE: DiscrepancySelectionState = {
     [TransactionCategory.UNPRESENTED_CHECKS]: [],
     [TransactionCategory.UNCLEARED_CHECKS]: [],
     [TransactionCategory.BANK_DEBITED_NOT_CREDITED]: [],
-    [TransactionCategory.BANK_CREDITED_NOT_DEBITED]: []
+    [TransactionCategory.BANK_CREDITED_NOT_DEBITED]: [],
+    [TransactionCategory.VENDOR_DEBITED_NOT_CREDITED]: [],
+    [TransactionCategory.VENDOR_CREDITED_NOT_DEBITED]: []
   },
   calculation: {
     totalAmount: 0,

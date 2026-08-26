@@ -2,8 +2,9 @@
 
 import { useState, useCallback, useMemo } from 'react';
 import { useSession } from 'next-auth/react';
-import { ReconciliationResult } from '@/types/reconciliation.types';
+import { ReconciliationResult, DiscrepancyTransaction } from '@/types/reconciliation.types';
 import { CategorizedResults } from '@/components/results/CategorizedResults';
+import { useReconciliationType } from '@/components/providers/reconciliation-type-provider';
 import { Badge } from '@/components/ui/badge';
 import {
   Card,
@@ -55,8 +56,13 @@ function statusVariant(status: ReconciliationResult['processing_status']) {
 
 export function ReconciliationResults({ result, onStartNew }: ReconciliationResultsProps) {
   const { data: session } = useSession();
+  const { reconciliationType } = useReconciliationType();
   const { request_id, processing_status, processing_timestamp, summary } = result;
-  const [discrepancies, setDiscrepancies] = useState(result.results.discrepancies);
+  // Graceful guard: the backend may return a partial/error result without a
+  // discrepancies array — never crash the page over a missing field.
+  const [discrepancies, setDiscrepancies] = useState<DiscrepancyTransaction[]>(
+    Array.isArray(result.results?.discrepancies) ? result.results.discrepancies : []
+  );
   const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set());
 
   // Generate itemIds for each discrepancy for selection tracking
@@ -123,7 +129,7 @@ export function ReconciliationResults({ result, onStartNew }: ReconciliationResu
 
     try {
       const fileData: CloudHistoryEntry[] = discrepancies.map(d => ({
-        category: categorizeDiscrepancy(d.FROM, d['Debit/Credit']),
+        category: categorizeDiscrepancy(d.FROM, d['Debit/Credit'], reconciliationType),
         transaction_details: d['Transaction Detail'],
         transaction_date: d['Transaction_date'],
         debit_credit_amount: d['Debit/Credit'],
@@ -139,10 +145,18 @@ export function ReconciliationResults({ result, onStartNew }: ReconciliationResu
     } finally {
       setIsSaving(false);
     }
-  }, [discrepancies, saveName, session]);
+  }, [discrepancies, saveName, session, reconciliationType]);
 
-  // Helper: determine category from source and amount
-  function categorizeDiscrepancy(from: string, amount: number): string {
+  // Helper: determine category from source, amount, and reconciliation mode.
+  function categorizeDiscrepancy(from: string, amount: number, mode: 'bank' | 'vendor' = 'bank'): string {
+    if (mode === 'vendor') {
+      // Vendor ledger: a positive source-side entry = credited but not debited;
+      // a negative one = debited but not credited.
+      if (from === 'Company' && amount < 0) return 'Unpresented Checks';
+      if (from === 'Company' && amount >= 0) return 'Uncleared Checks';
+      if (from === 'Bank' && amount >= 0) return 'Vendor Credited But not Debited in Cashbook';
+      return 'Vendor Debited but not Credited in Cashbook';
+    }
     if (from === 'Company' && amount < 0) return 'Unpresented Checks';
     if (from === 'Company' && amount >= 0) return 'Uncleared Checks';
     if (from === 'Bank' && amount >= 0) return 'Bank Debited But not Credited in Cashbook';
@@ -156,6 +170,7 @@ export function ReconciliationResults({ result, onStartNew }: ReconciliationResu
     { label: 'Bank Only', value: summary.bank_only_discrepancies },
     { label: 'Company Only', value: summary.company_only_discrepancies },
     { label: 'Matched Pairs Removed', value: summary.opposite_pairs_removed },
+    { label: 'Pair-Mate Pairs Removed', value: summary.pair_mate_pairs_removed ?? 0 },
     { label: 'Processing Duration', value: formatDuration(summary.processing_duration_ms) },
     { label: 'PDF Processing', value: formatDuration(summary.pdf_processing_time_ms) },
     { label: 'Excel Processing', value: formatDuration(summary.excel_processing_time_ms) },

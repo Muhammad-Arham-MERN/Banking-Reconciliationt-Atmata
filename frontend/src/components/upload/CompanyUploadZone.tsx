@@ -81,8 +81,8 @@ export function CompanyUploadZone({
       className={`
         relative border-2 border-dashed rounded-lg p-8 transition-all duration-200
         ${isActive || isOver
-          ? 'border-[#FF8A65] bg-[#FFCDD2] scale-105'
-          : 'border-[#FFCDD2] bg-white hover:border-[#FF8A65] hover:bg-[#FFEBEE]'}
+          ? 'border-[#FF8A65] bg-[#FFCDD2] scale-105 dark:bg-[#4a2a24]'
+          : 'border-[#FFCDD2] bg-white hover:border-[#FF8A65] hover:bg-[#FFEBEE] dark:border-[#5a3a33] dark:bg-gray-900 dark:hover:bg-[#3a2a24]'}
         ${isDragReject ? 'border-red-500 bg-red-50' : ''}
         ${uploadedFile ? 'border-green-500 bg-green-50' : ''}
         cursor-pointer min-h-[200px] flex flex-col items-center justify-center
@@ -97,18 +97,18 @@ export function CompanyUploadZone({
         </div>
 
         {/* Title */}
-        <h3 className="text-lg font-semibold text-gray-800">
+        <h3 className="text-lg font-semibold text-gray-800 dark:text-gray-100">
           {FIELD_LABELS.COMPANY_UPLOAD_TITLE}
         </h3>
 
         {/* Description */}
-        <p className="text-sm text-gray-600">
+        <p className="text-sm text-gray-600 dark:text-gray-400">
           {FIELD_LABELS.COMPANY_UPLOAD_DESCRIPTION}
         </p>
 
         {/* Upload instructions */}
         {!uploadedFile && (
-          <p className="text-sm text-gray-500">
+          <p className="text-sm text-gray-500 dark:text-gray-400">
             {FIELD_LABELS.COMPANY_UPLOAD_DROP_TEXT}
           </p>
         )}
@@ -117,10 +117,10 @@ export function CompanyUploadZone({
         {uploadedFile && (
           <div className="space-y-2">
             <div className="flex items-center justify-center space-x-2">
-              <span className="text-sm font-medium text-gray-800">
+              <span className="text-sm font-medium text-gray-800 dark:text-gray-100">
                 {uploadedFile.name}
               </span>
-              <span className="text-xs text-gray-500">
+              <span className="text-xs text-gray-500 dark:text-gray-400">
                 ({formatFileSize(uploadedFile.size)})
               </span>
             </div>

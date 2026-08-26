@@ -20,8 +20,10 @@ import {
   categorizeTransaction,
   generateItemId,
   getDisplayAmount,
-  formatAmount
+  formatAmount,
+  categoryLabel
 } from '@/lib/utils/categorizationUtils';
+import { useReconciliationType } from '@/components/providers/reconciliation-type-provider';
 import { CheckCircle2, XCircle, AlertTriangle } from 'lucide-react';
 
 interface CategorizedResultsProps {
@@ -38,12 +40,14 @@ interface CategorizedResultsProps {
  * Main categorization results component
  */
 export function CategorizedResults({ discrepancies, bankNetTotal, companyNetTotal, selectedItems, onToggleSelection, onReconcile }: CategorizedResultsProps) {
+  const { reconciliationType } = useReconciliationType();
+
   // Memoized categorization of transactions
   const categorizedData = useMemo(() => {
     return discrepancies.map((d, index) => {
-      const category = categorizeTransaction(d.FROM, d['Debit/Credit']);
+      const category = categorizeTransaction(d.FROM, d['Debit/Credit'], reconciliationType);
       const itemId = generateItemId(d['Transaction_date'], d.FROM, d['Debit/Credit'], index);
-      const displayAmount = getDisplayAmount(d.FROM, d['Debit/Credit'], category);
+      const displayAmount = getDisplayAmount(d.FROM, d['Debit/Credit'], category, reconciliationType);
 
       return {
         ...d,
@@ -53,15 +57,25 @@ export function CategorizedResults({ discrepancies, bankNetTotal, companyNetTota
         displayValue: formatAmount(displayAmount)
       };
     });
-  }, [discrepancies]);
+  }, [discrepancies, reconciliationType]);
 
-  // Group transactions by category
+  // Group transactions by the four display categories. In vendor mode the
+  // Bank-side categories are replaced by the vendor categories (same slots).
+  const displayDebited = reconciliationType === 'vendor'
+    ? TransactionCategory.VENDOR_DEBITED_NOT_CREDITED
+    : TransactionCategory.BANK_DEBITED_NOT_CREDITED;
+  const displayCredited = reconciliationType === 'vendor'
+    ? TransactionCategory.VENDOR_CREDITED_NOT_DEBITED
+    : TransactionCategory.BANK_CREDITED_NOT_DEBITED;
+
   const categories = useMemo(() => {
     const grouped: { [key in TransactionCategory]: CategorizedTransaction[] } = {
       [TransactionCategory.UNPRESENTED_CHECKS]: [],
       [TransactionCategory.UNCLEARED_CHECKS]: [],
       [TransactionCategory.BANK_DEBITED_NOT_CREDITED]: [],
-      [TransactionCategory.BANK_CREDITED_NOT_DEBITED]: []
+      [TransactionCategory.BANK_CREDITED_NOT_DEBITED]: [],
+      [TransactionCategory.VENDOR_DEBITED_NOT_CREDITED]: [],
+      [TransactionCategory.VENDOR_CREDITED_NOT_DEBITED]: []
     };
 
     categorizedData.forEach(transaction => {
@@ -71,11 +85,12 @@ export function CategorizedResults({ discrepancies, bankNetTotal, companyNetTota
     return grouped;
   }, [categorizedData]);
 
+  // The two source-side display slots (Bank or Vendor depending on mode).
   const categoryCount = {
     [TransactionCategory.UNPRESENTED_CHECKS]: categories[TransactionCategory.UNPRESENTED_CHECKS].length,
     [TransactionCategory.UNCLEARED_CHECKS]: categories[TransactionCategory.UNCLEARED_CHECKS].length,
-    [TransactionCategory.BANK_DEBITED_NOT_CREDITED]: categories[TransactionCategory.BANK_DEBITED_NOT_CREDITED].length,
-    [TransactionCategory.BANK_CREDITED_NOT_DEBITED]: categories[TransactionCategory.BANK_CREDITED_NOT_DEBITED].length
+    [displayDebited]: categories[displayDebited].length,
+    [displayCredited]: categories[displayCredited].length
   };
 
   const categorySubtotals = useMemo(() => {
@@ -148,17 +163,17 @@ export function CategorizedResults({ discrepancies, bankNetTotal, companyNetTota
       />
 
       <CategorySection
-        title={TransactionCategory.BANK_CREDITED_NOT_DEBITED}
-        transactions={categories[TransactionCategory.BANK_CREDITED_NOT_DEBITED]}
-        count={categoryCount[TransactionCategory.BANK_CREDITED_NOT_DEBITED]}
+        title={categoryLabel(displayCredited, reconciliationType)}
+        transactions={categories[displayCredited]}
+        count={categoryCount[displayCredited]}
         selectedItems={selectedItems}
         onToggleSelection={onToggleSelection}
       />
 
       <CategorySection
-        title={TransactionCategory.BANK_DEBITED_NOT_CREDITED}
-        transactions={categories[TransactionCategory.BANK_DEBITED_NOT_CREDITED]}
-        count={categoryCount[TransactionCategory.BANK_DEBITED_NOT_CREDITED]}
+        title={categoryLabel(displayDebited, reconciliationType)}
+        transactions={categories[displayDebited]}
+        count={categoryCount[displayDebited]}
         selectedItems={selectedItems}
         onToggleSelection={onToggleSelection}
       />
@@ -313,9 +328,9 @@ function CategorySection({ title, transactions, count, selectedItems, onToggleSe
           <div
             key={transaction.itemId}
             className={`flex items-center px-4 py-3 hover:bg-muted/30 ${
-              selectedItems?.has(transaction.itemId) ? 'bg-blue-50/50' : ''
+              selectedItems?.has(transaction.itemId) ? 'bg-blue-50/50 dark:bg-blue-950/30' : ''
             } ${
-              transaction.from_past ? 'bg-purple-50' : ''
+              transaction.from_past ? 'bg-purple-50 dark:bg-purple-950/30' : ''
             }`}
           >
             {onToggleSelection && (

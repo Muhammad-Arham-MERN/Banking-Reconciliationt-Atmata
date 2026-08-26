@@ -15,28 +15,50 @@ import { TransactionCategory } from '@/types/categorization.types';
 
 /**
  * وَهُوَ عَلَى كُلِّ شَيْءٍ قَدِيرٌ
- * Categorize a transaction based on its source and value
+ * Categorize a transaction based on its source, value, and reconciliation type.
+ *
+ * For "bank" mode, the source is the bank statement (Credit +, Debit -).
+ * For "vendor" mode, the source is the vendor ledger (Debit +, Credit -).
  *
  * @param source - The transaction source ('Bank' or 'Company')
  * @param value - The transaction value (positive for credit, negative for debit)
+ * @param reconciliationType - "bank" (default) or "vendor"
  * @returns The appropriate TransactionCategory enum value
  */
 export function categorizeTransaction(
   source: string,
-  value: number
+  value: number,
+  reconciliationType: 'bank' | 'vendor' = 'bank'
 ): TransactionCategory {
-  const isBank = source === 'Bank';
+  const isSource = source === 'Bank';
   const isPositive = value > 0;
 
-  if (isBank && isPositive) {
+  if (reconciliationType === 'vendor') {
+    // Vendor ledger: Credit is -, Debit is + (inverted vs a bank statement).
+    // A source-side entry that is positive = debited (money the vendor paid
+    // out / you owe) but not credited in the cash book; a negative one =
+    // credited (money the vendor received) but not debited.
+    if (isSource && isPositive) {
+      return TransactionCategory.VENDOR_DEBITED_NOT_CREDITED;
+    }
+    if (isSource && !isPositive) {
+      return TransactionCategory.VENDOR_CREDITED_NOT_DEBITED;
+    }
+    if (!isSource && isPositive) {
+      return TransactionCategory.UNCLEARED_CHECKS;
+    }
+    return TransactionCategory.UNPRESENTED_CHECKS;
+  }
+
+  if (isSource && isPositive) {
     // Bank credit (money in) — not recorded in company cash book
     return TransactionCategory.BANK_CREDITED_NOT_DEBITED;
   }
-  if (isBank && !isPositive) {
+  if (isSource && !isPositive) {
     // Bank debit (money out) — not recorded in company cash book
     return TransactionCategory.BANK_DEBITED_NOT_CREDITED;
   }
-  if (!isBank && isPositive) {
+  if (!isSource && isPositive) {
     return TransactionCategory.UNCLEARED_CHECKS;
   }
   return TransactionCategory.UNPRESENTED_CHECKS;  // Company + Negative
@@ -86,19 +108,44 @@ export function generateItemId(
 export function getDisplayAmount(
   source: string,
   rawAmount: number,
-  category?: TransactionCategory
+  category?: TransactionCategory,
+  reconciliationType: 'bank' | 'vendor' = 'bank'
 ): number {
   if (category) {
     switch (category) {
       case TransactionCategory.UNPRESENTED_CHECKS:
       case TransactionCategory.BANK_CREDITED_NOT_DEBITED:
+      case TransactionCategory.VENDOR_CREDITED_NOT_DEBITED:
         return -Math.abs(rawAmount);       // Always negative
       case TransactionCategory.UNCLEARED_CHECKS:
       case TransactionCategory.BANK_DEBITED_NOT_CREDITED:
+      case TransactionCategory.VENDOR_DEBITED_NOT_CREDITED:
         return Math.abs(rawAmount);         // Always positive
     }
   }
   return rawAmount;  // Fallback: unchanged
+}
+
+/**
+ * Resolve the display label for a category under the active reconciliation
+ * mode. In "vendor" mode the Bank-side categories are replaced with their
+ * vendor equivalents (a vendor ledger's debit/credit roles are inverted).
+ */
+export function categoryLabel(
+  category: TransactionCategory,
+  reconciliationType: 'bank' | 'vendor' = 'bank'
+): string {
+  if (reconciliationType === 'vendor') {
+    switch (category) {
+      case TransactionCategory.BANK_CREDITED_NOT_DEBITED:
+        return TransactionCategory.VENDOR_CREDITED_NOT_DEBITED;
+      case TransactionCategory.BANK_DEBITED_NOT_CREDITED:
+        return TransactionCategory.VENDOR_DEBITED_NOT_CREDITED;
+      default:
+        return category;
+    }
+  }
+  return category;
 }
 
 /**
