@@ -13,79 +13,223 @@ logger = logging.getLogger(__name__)
 
 # ==================== Date Transformation Patterns ====================
 
-# PDF date pattern: DD-MMM-YY (e.g., "15-JAN-23")
-PDF_DATE_PATTERN = re.compile(r"^\d{2}-[A-Z]{3}-\d{2}$")
+# PDF date pattern: DD-MMM-YY or DD-MMM-YYYY (e.g., "15-JAN-23", "03-Jul-2026").
+PDF_DATE_PATTERN = re.compile(r"^\d{2}-[A-Z]{3}-\d{2,4}$")
 
 # Excel serial date base: Excel dates are stored as days since 1900-01-01
 EXCEL_EPOCH = datetime(1899, 12, 30)  # Excel epoch adjusted for Lotus 1-2-3 bug
+
+# Case-insensitive month maps shared with the canonical date parser.
+_MONTH_ABBR = {
+    m.lower(): i
+    for i, m in enumerate(
+        ["jan", "feb", "mar", "apr", "may", "jun",
+         "jul", "aug", "sep", "oct", "nov", "dec"],
+        1,
+    )
+}
+_MONTH_FULL = {
+    m.lower(): i
+    for i, m in enumerate(
+        ["january", "february", "march", "april", "may", "june",
+         "july", "august", "september", "october", "november", "december"],
+        1,
+    )
+}
+
+
+# وَهُوَ عَلَى كُلِّ شَيْءٍ قَدِيرٌ
+def _strip_trailing_time(text: str) -> str:
+    """Trim a trailing time component (credit-card statements carry '12:00 AM')."""
+    return re.sub(
+        r"\s+\d{1,2}:\d{2}(:\d{2})?\s*(AM|PM)?$", "", text.strip(), flags=re.IGNORECASE
+    ).strip()
+
+
+# وَهُوَ عَلَى كُلِّ شَيْءٍ قَدِيرٌ
+def canonicalize_date(text: Any) -> Optional["datetime.date"]:
+    """Parse a date-like cell into a datetime.date, or None.
+
+    This is the canonical date parser used by both the production
+    transformers and the structure assessor. It handles:
+      - DD-MM-YY / DD/MM/YYYY and friends (numeric, any separator)
+      - DD-MMM-YY and DD-MMM-YYYY (e.g. 05-MAY-26, 03-Jul-2026)
+      - space-separated forms (Soneri style '23 05 2026')
+      - ISO and dotted 4-digit-year forms
+      - a trailing time component that is stripped first
+
+    Returns None when the cell cannot be confidently parsed (never guessed).
+    """
+    if text is None:
+        return None
+    t = _strip_trailing_time(str(text))
+    if not t:
+        return None
+    t_lower = t.lower()
+
+    def _try(fmt: str) -> Optional["datetime.date"]:
+        try:
+            return datetime.strptime(t, fmt).date()
+        except ValueError:
+            return None
+
+    # Fast path: the common 2-digit-year form DD-MM-YY / DD/MM/YY and friends.
+    m = re.match(r"^(\d{1,2})[-/.](\d{1,2})[-/.](\d{2,4})$", t)
+    if m:
+        a, b, y = m.group(1), m.group(2), m.group(3)
+        yyyy = int(y) + (2000 if len(y) == 2 else 0)
+        # Try day-month-year first (bank statements are DD/MM/YYYY); if the
+        # first field is >12 it can only be a day, if the second is >12 it can
+        # only be a month.
+        cand = [(int(a), int(b)), (int(b), int(a))]
+        for d, mo in cand:
+            if 1 <= d <= 31 and 1 <= mo <= 12:
+                try:
+                    return datetime(yyyy, mo, d).date()
+                except ValueError:
+                    continue
+        return None
+
+    # Month-name forms (abbreviated or full), any separator.
+    m = re.match(r"^(\d{1,2})\s*[-/.\s]\s*([a-z]+)\s*[-/.\s]\s*(\d{2,4})$", t_lower)
+    if m:
+        d, mon, y = m.group(1), m.group(2), m.group(3)
+        mo = _MONTH_ABBR.get(mon) or _MONTH_FULL.get(mon)
+        if mo:
+            yyyy = int(y) + (2000 if len(y) == 2 else 0)
+            try:
+                return datetime(yyyy, mo, int(d)).date()
+            except ValueError:
+                return None
+
+    # Space-separated numeric (Soneri style '23 05 2026').
+    m = re.match(r"^(\d{1,2}) (\d{1,2}) (\d{2,4})$", t)
+    if m:
+        d, mo, y = int(m.group(1)), int(m.group(2)), m.group(3)
+        yyyy = y if len(y) == 4 else "20" + y
+        try:
+            return datetime(int(yyyy), mo, d).date()
+        except ValueError:
+            return None
+
+    # ISO and 4-digit-year slash forms, via strptime.
+    for fmt in ("%Y-%m-%d", "%Y/%m/%d", "%d.%m.%Y", "%d.%m.%y"):
+        d = _try(fmt)
+        if d:
+            return d
+
+    return None
+
+
+# وَهُوَ عَلَى كُلِّ شَيْءٍ قَدِيرٌ
+def parse_amount(value: Any) -> Optional[float]:
+    """Strictly parse a cell into a signed float amount.
+
+    This is the canonical amount parser used by both the production
+    transformers and the structure assessor. Handles:
+      - thousands separators: `1,234,567.89` -> `1234567.89`
+      - parenthesized negatives: `(29,880,105.57)` -> `-29880105.57`
+      - leading/trailing whitespace and `-`, `−`, `–`, `+` prefixes
+      - currency symbols (`Rs.`, `₨`, `$`)
+      - mixed decimal separators (`.` or `,`), with a strict documented rule:
+        the LAST separator is the decimal point, all earlier ones are
+        thousands separators.
+
+    Returns None when the cell cannot be parsed as an amount (never guessed).
+    """
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+
+    # Parenthesized amount = negative (Meezan uses this for balances).
+    negative = text.startswith("(") and text.endswith(")")
+    if negative:
+        text = text[1:-1]
+
+    # Strip currency symbols and non-amount punctuation except separators.
+    text = text.replace("Rs.", "").replace("rs.", "").replace("₨", "").replace("$", "")
+    text = text.replace(" ", "").strip()
+
+    # Reject double signs / multiple signs (e.g. "--5", "+-5") — a strict
+    # parser must not guess.
+    sign_chars = [c for c in text if c in "-−–+"]
+    if len(sign_chars) > 1:
+        return None
+
+    # Leading sign.
+    sign = 1.0
+    if text[:1] in ("-", "−", "–"):
+        sign = -1.0
+        text = text[1:]
+    elif text[:1] == "+":
+        text = text[1:]
+
+    if not text:
+        return None
+
+    # Mixed separators: last comma/dot is the decimal point, earlier are
+    # thousands separators. A plain integer (no separator) also parses.
+    if "," in text and "." in text:
+        if text.rfind(",") > text.rfind("."):
+            # Last separator is a comma -> it is the decimal point
+            # (e.g. 1.234.567,89 -> 1234567,89 -> 1234567.89).
+            text = text.replace(".", "").replace(",", ".")
+        else:
+            # Last separator is a dot -> it is the decimal point
+            # (e.g. 1,234,567.89 -> 1234567.89).
+            text = text.replace(",", "")
+    elif "," in text and "." not in text:
+        if text.endswith(","):
+            # A single trailing comma is a decimal point (e.g. "123," -> 123.0).
+            text = text[:-1] + "."
+        else:
+            # No dot: all commas are thousands separators (e.g. "1,234" -> 1234).
+            text = text.replace(",", "")
+
+    try:
+        value = float(text)
+    except ValueError:
+        return None
+
+    if negative:
+        value = -value
+    return sign * value
 
 
 # وَهُوَ عَلَى كُلِّ شَيْءٍ قَدِيرٌ
 def normalize_pdf_date(date_str: str) -> Optional[str]:
     """
-    Convert PDF date format (DD-MMM-YY) to ISO format (YYYY-MM-DD)
-    Handles 2-digit year conversion with pivot year
+    Convert PDF date to ISO format (YYYY-MM-DD).
+
+    Delegates to the canonical `canonicalize_date` parser (the same one the
+    structure assessor uses), so it accepts both DD-MMM-YY and DD-MMM-YYYY
+    (e.g. "15-JAN-23", "03-Jul-2026"), plus the other numeric/space forms the
+    assessor handles.
 
     Args:
-        date_str: Date string in PDF format (e.g., "15-JAN-23")
+        date_str: Date string from a PDF statement.
 
     Returns:
-        ISO formatted date string (YYYY-MM-DD) or None if invalid
+        ISO formatted date string (YYYY-MM-DD) or None if invalid.
 
     Examples:
         >>> normalize_pdf_date("15-JAN-23")
         "2023-01-15"
+        >>> normalize_pdf_date("03-Jul-2026")
+        "2026-07-03"
         >>> normalize_pdf_date("03-DEC-22")
         "2022-12-03"
     """
     try:
         if not date_str or not isinstance(date_str, str):
             return None
-
-        # Validate format with pattern
-        if not PDF_DATE_PATTERN.match(date_str):
+        parsed = canonicalize_date(date_str)
+        if parsed is None:
             logger.warning(f"Invalid PDF date format: {date_str}")
             return None
-
-        # Parse components
-        parts = date_str.split('-')
-        if len(parts) != 3:
-            return None
-
-        day, month_abbr, year_short = parts
-
-        # Convert 2-digit year to 4-digit (pivot year: 50)
-        year_int = int(year_short)
-        if year_int >= 50:
-            year = 1900 + year_int
-        else:
-            year = 2000 + year_int
-
-        # Convert month abbreviation to number
-        month_map = {
-            'JAN': 1, 'FEB': 2, 'MAR': 3, 'APR': 4, 'MAY': 5, 'JUN': 6,
-            'JUL': 7, 'AUG': 8, 'SEP': 9, 'OCT': 10, 'NOV': 11, 'DEC': 12
-        }
-        month = month_map.get(month_abbr.upper())
-        if not month:
-            return None
-
-        # Convert day to integer
-        day_int = int(day)
-
-        # Validate date ranges
-        if not (1 <= day_int <= 31) or not (1 <= month <= 12):
-            return None
-
-        # Format as ISO date
-        try:
-            iso_date = f"{year:04d}-{month:02d}-{day_int:02d}"
-            # Validate by parsing back
-            datetime.strptime(iso_date, "%Y-%m-%d")
-            return iso_date
-        except ValueError:
-            return None
-
+        return parsed.isoformat()
     except Exception as e:
         logger.error(f"Error normalizing PDF date {date_str}: {str(e)}")
         return None
@@ -203,6 +347,22 @@ def merge_debit_credit(debit_value: Optional[float], credit_value: Optional[floa
         if isinstance(credit_value, str) and not credit_value.strip():
             credit_value = None
 
+        # A literal zero cell is a BLANK amount cell, not a value: in a
+        # debit/credit layout only one of the two columns carries an amount
+        # per row, and the opposite column prints "0" (or "0.00") for empty.
+        # Treating 0 as "present" made every row look ambiguous and dropped
+        # the whole statement. A zero amount is not a transaction.
+        if debit_value is not None and (
+            debit_value == 0
+            or (isinstance(debit_value, str) and parse_amount(debit_value) == 0)
+        ):
+            debit_value = None
+        if credit_value is not None and (
+            credit_value == 0
+            or (isinstance(credit_value, str) and parse_amount(credit_value) == 0)
+        ):
+            credit_value = None
+
         # Both None - invalid
         if debit_value is None and credit_value is None:
             logger.warning("Both debit and credit are None/missing")
@@ -213,35 +373,23 @@ def merge_debit_credit(debit_value: Optional[float], credit_value: Optional[floa
             logger.warning(f"Ambiguous transaction: both debit={debit_value} and credit={credit_value} present")
             return None
 
-        # Debit only - negative float (money out)
+        # Debit only - negative float (money out). Uses the canonical
+        # parse_amount so parenthesized negatives "(1,234.56)" and comma/
+        # currency formats parse correctly (same parser as the assessor).
         if debit_value is not None:
-            try:
-                # Handle string values with commas (e.g., "10,200.00")
-                if isinstance(debit_value, str):
-                    debit_value = debit_value.replace(',', '')
-
-                amount = float(debit_value)
-                if amount == 0:
-                    return None
-                return -abs(amount)
-            except (ValueError, TypeError):
+            amount = parse_amount(debit_value)
+            if amount is None or amount == 0:
                 logger.warning(f"Invalid debit value: {debit_value}")
                 return None
+            return -abs(amount)
 
         # Credit only - positive float (money in)
         if credit_value is not None:
-            try:
-                # Handle string values with commas (e.g., "22,000.00")
-                if isinstance(credit_value, str):
-                    credit_value = credit_value.replace(',', '')
-
-                amount = float(credit_value)
-                if amount == 0:
-                    return None
-                return abs(amount)
-            except (ValueError, TypeError):
+            amount = parse_amount(credit_value)
+            if amount is None or amount == 0:
                 logger.warning(f"Invalid credit value: {credit_value}")
                 return None
+            return abs(amount)
 
         return None
 
@@ -274,16 +422,20 @@ def convert_combined_amount(amount_value: Any, sign: str) -> Optional[float]:
         if pd.isna(amount_value):
             return None
 
-        # Convert to float
-        amount = float(amount_value)
+        # Auto-detect sign from amount value (preserve original sign). Uses
+        # the canonical parse_amount so parenthesized/commas/currency parse.
+        if sign == 'auto':
+            parsed = parse_amount(amount_value)
+            if parsed is None or parsed == 0:
+                return None
+            return parsed
+
+        amount = parse_amount(amount_value)
+        if amount is None:
+            return None
 
         if amount == 0:
             return None
-
-        # Auto-detect sign from amount value (preserve original sign)
-        if sign == 'auto':
-            # Preserve the original sign from Excel: negative = debit, positive = credit
-            return amount
 
         # Apply explicit sign (debit=negative, credit=positive)
         if sign == 'credit':

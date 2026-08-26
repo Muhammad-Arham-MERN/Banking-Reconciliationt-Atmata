@@ -21,9 +21,8 @@ if %ERRORLEVEL% neq 0 (
 )
 
 REM ── Step 2: Start services ────────────────────────────────────────────────
-set "VENV_PYTHON=%ROOT%backend\.venv\Scripts\python.exe"
 
-start "Backend - Uvicorn" cmd /k "cd /d "%ROOT%backend" && "%VENV_PYTHON%" -m uvicorn src.main:app --host 0.0.0.0 --port 8000 --reload"
+start "Backend - Uvicorn" cmd /k "cd /d "%ROOT%backend" && uv run uvicorn src.main:app --host 0.0.0.0 --port 8000 --reload"
 
 start "Frontend - Next.js" cmd /k "cd /d "%ROOT%frontend" && npm run dev"
 

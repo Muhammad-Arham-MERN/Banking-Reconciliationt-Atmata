@@ -598,6 +598,7 @@ async def process_reconciliation(
                     "bank_only_discrepancies": bank_only_discrepancies,
                     "company_only_discrepancies": company_only_discrepancies,
                     "opposite_pairs_removed": opposite_pairs_removed,
+                    "pair_mate_pairs_removed": reconciliation_service.pair_mate_pairs_removed,
                     "processing_duration_ms": total_processing_time,
                     "pdf_processing_time_ms": pdf_time,
                     "excel_processing_time_ms": excel_time,

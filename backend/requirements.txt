@@ -3,6 +3,9 @@ fastapi==0.104.1
 uvicorn[standard]==0.24.0
 python-multipart==0.0.6
 
+# AI Structure Detection (Istikhraj e Data Ma'a AI)
+openai-agents[litellm]
+
 # Data Processing
 pandas==2.1.4
 openpyxl==3.1.5

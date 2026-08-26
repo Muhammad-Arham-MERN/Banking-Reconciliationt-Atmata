@@ -415,13 +415,19 @@ def validate_file_type(file_path: Path, expected_type: str) -> Tuple[bool, Optio
         if not file_path.exists():
             return False, f"File not found: {file_path}"
 
-        # Read first few bytes for magic byte check
+        # Read first bytes for magic byte check
         with open(file_path, 'rb') as f:
-            file_header = f.read(8)
+            file_header = f.read(1024)
 
         # Check magic bytes for expected type
         if expected_type == 'pdf':
-            if not file_header.startswith(MAGIC_BYTES['pdf']):
+            # PDF spec (ISO 32000-1 §7.5.2): header must be within the first
+            # 1024 bytes. Some bank-exported PDFs carry a UTF-8 BOM (EF BB BF)
+            # or leading whitespace before %PDF, so scan the header window
+            # instead of requiring %PDF at byte 0. HTML disguised as .pdf
+            # (e.g. error pages) still fails this check.
+            pdf_header = file_header.lstrip(b'\xef\xbb\xbf').lstrip(b' \t\r\n')
+            if MAGIC_BYTES['pdf'] not in pdf_header[:1024]:
                 return False, "Invalid PDF file (magic byte check failed)"
 
         elif expected_type == 'excel':

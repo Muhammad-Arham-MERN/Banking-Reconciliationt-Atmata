@@ -6,7 +6,7 @@
 
 'use client';
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useSession } from 'next-auth/react';
 import type { BankStatementFile, CompanyDataFile, ColumnMappingConfiguration } from '../../types/upload';
 import type { ReconciliationResult } from '@/types/reconciliation.types';
@@ -20,6 +20,7 @@ import { historyClient } from '@/lib/api/historyClient'; // @deprecated — only
 import { cloudHistoryClient } from '@/lib/api/cloudHistoryClient';
 import { canSubmitForm, preserveCommonFields, updateColumnMappingValidation } from '../../lib/validation';
 import { Button } from '@/components/ui/button';
+import { RefreshCw } from 'lucide-react';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
   Select,
@@ -62,38 +63,34 @@ export function UploadForm() {
   const [cloudHistoryLoading, setCloudHistoryLoading] = useState(false);
   const [cloudHistoryError, setCloudHistoryError] = useState<string | null>(null);
 
-  // Load cloud history files on mount
+  // Load cloud history files once when the page first mounts (not on every
+  // session refetch). next-auth refetches the session on tab switch / window
+  // focus, which re-created the [session]-keyed effect and re-called the API.
+  const hasLoadedCloudFiles = useRef(false);
+
+  const loadCloudFiles = useCallback(() => {
+    const token = (session?.user as { access_token?: string } | undefined)?.access_token;
+    if (!token) return;
+
+    setCloudHistoryLoading(true);
+    setCloudHistoryError(null);
+
+    cloudHistoryClient.listCloudFiles(token)
+      .then(resp => setCloudFiles(resp.files))
+      .catch(err => {
+        setCloudFiles([]);
+        setCloudHistoryError(err instanceof Error ? err.message : 'Failed to load history');
+      })
+      .finally(() => setCloudHistoryLoading(false));
+  }, [session]);
+
   useEffect(() => {
+    if (hasLoadedCloudFiles.current) return;
     const token = (session?.user as { access_token?: string } | undefined)?.access_token;
-    if (!token) return;
-
-    setCloudHistoryLoading(true);
-    setCloudHistoryError(null);
-
-    cloudHistoryClient.listCloudFiles(token)
-      .then(resp => setCloudFiles(resp.files))
-      .catch(err => {
-        setCloudFiles([]);
-        setCloudHistoryError(err instanceof Error ? err.message : 'Failed to load history');
-      })
-      .finally(() => setCloudHistoryLoading(false));
-  }, [session]);
-
-  const retryLoadCloudFiles = useCallback(() => {
-    const token = (session?.user as { access_token?: string } | undefined)?.access_token;
-    if (!token) return;
-
-    setCloudHistoryLoading(true);
-    setCloudHistoryError(null);
-
-    cloudHistoryClient.listCloudFiles(token)
-      .then(resp => setCloudFiles(resp.files))
-      .catch(err => {
-        setCloudFiles([]);
-        setCloudHistoryError(err instanceof Error ? err.message : 'Failed to load history');
-      })
-      .finally(() => setCloudHistoryLoading(false));
-  }, [session]);
+    if (!token) return; // session still loading — wait for it
+    hasLoadedCloudFiles.current = true;
+    loadCloudFiles();
+  }, [session, loadCloudFiles]);
 
   const handleBankFileUpload = (file: BankStatementFile) => {
     setBankStatement(file);
@@ -259,10 +256,10 @@ export function UploadForm() {
     <div className="w-full max-w-6xl mx-auto p-6">
       <div className="space-y-6">
         <div className="text-center space-y-2">
-          <h1 className="text-3xl font-bold text-gray-800">
+          <h1 className="text-3xl font-bold text-gray-800 dark:text-gray-100">
             Bank Reconciliation System
           </h1>
-          <p className="text-gray-600">
+          <p className="text-gray-600 dark:text-gray-400">
             Upload your bank statement and company data files to begin reconciliation
           </p>
         </div>
@@ -280,16 +277,16 @@ export function UploadForm() {
             </div>
           </div>
         ) : (
-          <div className="rounded-xl border border-purple-200 bg-gradient-to-br from-purple-50/70 via-white to-purple-50/30 px-5 py-4 shadow-sm transition-all duration-200 hover:shadow-md hover:border-purple-300">
+          <div className="rounded-xl border border-purple-200 bg-gradient-to-br from-purple-50/70 via-white to-purple-50/30 px-5 py-4 shadow-sm transition-all duration-200 hover:shadow-md hover:border-purple-300 dark:border-purple-900 dark:from-gray-900 dark:via-gray-900 dark:to-gray-900 dark:hover:border-purple-700">
             <div className="flex items-center gap-4 flex-wrap">
               <div className="flex items-center gap-2.5">
-                <div className="flex h-8 w-8 items-center justify-center rounded-full bg-purple-100 text-purple-600">
+                <div className="flex h-8 w-8 items-center justify-center rounded-full bg-purple-100 text-purple-600 dark:bg-purple-900/50 dark:text-purple-300">
                   <svg width="14" height="14" viewBox="0 0 15 15" fill="none" xmlns="http://www.w3.org/2000/svg">
                     <path d="M7.5 1.5C4.5 1.5 2 4 2 7.5C2 11 4.5 13.5 7.5 13.5C10.5 13.5 13 11 13 7.5C13 4 10.5 1.5 7.5 1.5Z" stroke="currentColor" strokeWidth="1.2"/>
                     <path d="M7.5 5V8M7.5 10V9.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round"/>
                   </svg>
                 </div>
-                <label className="text-sm font-semibold text-purple-900 whitespace-nowrap">
+                <label className="text-sm font-semibold text-purple-900 whitespace-nowrap dark:text-purple-200">
                   Open Maazi
                 </label>
               </div>
@@ -323,18 +320,18 @@ export function UploadForm() {
                   )}
                 </SelectContent>
               </Select>
-              {cloudHistoryError && (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={retryLoadCloudFiles}
-                  disabled={cloudHistoryLoading}
-                >
-                  {cloudHistoryLoading ? 'Retrying...' : 'Retry'}
-                </Button>
-              )}
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={loadCloudFiles}
+                disabled={cloudHistoryLoading}
+                title="Refresh list of past reconciliations"
+              >
+                <RefreshCw className={cloudHistoryLoading ? 'animate-spin' : ''} />
+                {cloudHistoryLoading ? 'Refreshing...' : 'Refresh'}
+              </Button>
               {selectedCloudFile && !cloudHistoryError && (
-                <div className="flex items-center gap-1.5 rounded-full bg-purple-100/80 px-3 py-1 text-xs font-medium text-purple-700">
+                <div className="flex items-center gap-1.5 rounded-full bg-purple-100/80 px-3 py-1 text-xs font-medium text-purple-700 dark:bg-purple-900/50 dark:text-purple-300">
                   <svg width="10" height="10" viewBox="0 0 15 15" fill="none" xmlns="http://www.w3.org/2000/svg">
                     <path d="M7.5 1.5C4.5 1.5 2 4 2 7.5C2 11 4.5 13.5 7.5 13.5C10.5 13.5 13 11 13 7.5C13 4 10.5 1.5 7.5 1.5Z" stroke="currentColor" strokeWidth="1.2"/>
                     <path d="M7.5 5V8M7.5 10V9.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round"/>

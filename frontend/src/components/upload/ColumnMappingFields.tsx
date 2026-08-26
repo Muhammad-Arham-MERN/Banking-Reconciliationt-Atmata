@@ -85,7 +85,7 @@ export function ColumnMappingFields({
     error?: string
   ) => (
     <div className="space-y-1">
-      <label className="block text-sm font-medium text-gray-700">
+      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">
         {label}
       </label>
       <input
@@ -96,8 +96,8 @@ export function ColumnMappingFields({
         placeholder={placeholder}
         className={`
           w-full px-3 py-2 rounded-lg border-2
-          ${error ? 'border-red-500 focus:border-red-500 focus:ring-red-500' : 'border-gray-300 focus:border-[#FF8A65] focus:ring-[#FF8A65]'}
-          bg-white text-gray-800 text-sm
+          ${error ? 'border-red-500 focus:border-red-500 focus:ring-red-500' : 'border-gray-300 focus:border-[#FF8A65] focus:ring-[#FF8A65] dark:border-gray-700'}
+          bg-white text-gray-800 text-sm dark:bg-gray-900 dark:text-gray-100
           focus:ring-2 focus:ring-opacity-50
           transition-all duration-200
           disabled:opacity-50 disabled:cursor-not-allowed
@@ -191,8 +191,8 @@ export function ColumnMappingFields({
   // Don't render if no format is selected
   if (!config.formatType) {
     return (
-      <div className="p-4 bg-gray-50 border border-gray-200 rounded-lg">
-        <p className="text-sm text-gray-500 text-center">
+      <div className="p-4 bg-gray-50 border border-gray-200 rounded-lg dark:bg-gray-900 dark:border-gray-800">
+        <p className="text-sm text-gray-500 text-center dark:text-gray-400">
           Select a data format above to configure column mappings
         </p>
       </div>
@@ -203,10 +203,10 @@ export function ColumnMappingFields({
     <div className="space-y-6">
       {/* Header */}
       <div>
-        <h3 className="text-lg font-semibold text-gray-800">
+        <h3 className="text-lg font-semibold text-gray-800 dark:text-gray-100">
           Column Mapping Configuration
         </h3>
-        <p className="text-sm text-gray-600">
+        <p className="text-sm text-gray-600 dark:text-gray-400">
           Specify the column names from your Excel file that correspond to each data field
         </p>
       </div>

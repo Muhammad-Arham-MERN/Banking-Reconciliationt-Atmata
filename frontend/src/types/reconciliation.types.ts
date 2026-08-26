@@ -34,6 +34,7 @@ export interface ReconciliationSummary {
   bank_only_discrepancies: number;
   company_only_discrepancies: number;
   opposite_pairs_removed: number;
+  pair_mate_pairs_removed?: number;
   processing_duration_ms: number;
   pdf_processing_time_ms: number;
   excel_processing_time_ms: number;
@@ -44,6 +45,27 @@ export interface ReconciliationSummary {
 export interface NetTotalValue {
   value: number | null;
   status: 'found' | 'missing' | 'invalid';
+}
+
+// AI Detected Structure (Istikhraj e Data Ma'a AI)
+export interface AIDetectedStructure {
+  columns_pdf: string[];
+  columns_excel: string[];
+  header_words_pdf?: string[];
+  header_top_pdf?: number;
+  rows_dropped_pdf?: number;
+  column_boundaries_pdf?: number[];
+  band_top_pdf?: number;
+  date_pattern_pdf?: string;
+}
+
+// AI Metadata returned by /reconcile-ai
+export interface AIMetadata {
+  model?: string;
+  detected_structure?: AIDetectedStructure;
+  retries_used?: number | { pdf: number; excel: number };
+  failed_file?: string;
+  stages?: { stage: string; duration_ms: number }[];
 }
 
 // Reconciliation Result Interface
@@ -59,6 +81,7 @@ export interface ReconciliationResult {
   };
   bank_net_total?: NetTotalValue;
   company_net_total?: NetTotalValue;
+  ai_metadata?: AIMetadata;
   errors: string[];
   message: string;
 }

@@ -30,16 +30,15 @@ interface ManualReconciliationProps {
  * Manual reconciliation component with selection tracking and calculation preview
  */
 export function ManualReconciliation({ transactions, selectedItems = new Set(), onToggleSelection, onReconcile }: ManualReconciliationProps) {
-  // Derived state: categorized transactions by category
+  // Derived state: categorized transactions by category (any of the bank or
+  // vendor category keys, depending on the active reconciliation mode).
   const categorizedTransactions = useMemo(() => {
-    const grouped: { [key: string]: CategorizedTransaction[] } = {
-      'UNPRESENTED CHECKS': [],
-      'UNCLEARED CHECKS': [],
-      'BANK DEBITED BUT NOT CREDITED IN CASH BOOK': [],
-      'BANK CREDITED BUT NOT DEBITED IN CASH BOOK': []
-    };
+    const grouped: { [key: string]: CategorizedTransaction[] } = {};
 
     transactions.forEach(t => {
+      if (!grouped[t.category]) {
+        grouped[t.category] = [];
+      }
       grouped[t.category].push(t);
     });
 

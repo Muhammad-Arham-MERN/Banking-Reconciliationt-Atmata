@@ -30,12 +30,12 @@ export default function SessionStatus() {
           className="h-8 w-8 rounded-full"
         />
       )}
-      <span className="text-sm text-gray-700">
+      <span className="text-sm text-gray-700 dark:text-gray-300">
         {session.user?.name || session.user?.email}
       </span>
       <button
         onClick={() => signOut({ redirectTo: "/" })}
-        className="rounded-md bg-gray-100 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-200"
+        className="rounded-md bg-gray-100 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
       >
         Sign out
       </button>

@@ -4,11 +4,15 @@ Bank reconciliation service implementing amount-based transaction comparison.
 Core reconciliation logic with deterministic behavior and opposite sign removal.
 """
 
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Tuple
 import time
 from decimal import Decimal, ROUND_HALF_UP
 
 # وَهُوَ عَلَى كُلِّ شَيْءٍ قَدِيرٌ
+
+# Margin of error relief (in rupees) applied by the pair-mate filter when
+# comparing two amounts after whole-rupee rounding.
+PAIR_MATE_MARGIN = 1.0
 
 
 class ReconciliationService:
@@ -16,6 +20,7 @@ class ReconciliationService:
 
     def __init__(self):
         self.processing_time_ms = 0
+        self.pair_mate_pairs_removed = 0
 
     def reconcile(self,
                  bank_transactions: List[Dict[str, Any]],
@@ -44,8 +49,18 @@ class ReconciliationService:
         bank_discrepancies = self._find_bank_discrepancies(bank_transactions, company_transactions, company_used, bank_used)
         company_discrepancies = self._find_company_discrepancies(company_transactions, bank_transactions, company_used, bank_used)
 
-        # Remove opposite sign pairs
-        final_discrepancies = self._remove_opposite_pairs(bank_discrepancies, company_discrepancies)
+        # Layer 1 (sam-sam leftovers): remove opposite sign pairs across sources
+        bank_discrepancies, company_discrepancies = self._remove_opposite_pairs(
+            bank_discrepancies, company_discrepancies
+        )
+
+        # Layer 2 (pair-mate): cancel same-date opposite-sign pairs within each source
+        bank_discrepancies, company_discrepancies, pair_mate_pairs = self._remove_pair_mate_pairs(
+            bank_discrepancies, company_discrepancies
+        )
+        self.pair_mate_pairs_removed = pair_mate_pairs
+
+        final_discrepancies = bank_discrepancies + company_discrepancies
 
         self.processing_time_ms = int((time.time() - start_time) * 1000)
         return final_discrepancies
@@ -144,10 +159,11 @@ class ReconciliationService:
 
     def _remove_opposite_pairs(self,
                               bank_discrepancies: List[Dict[str, Any]],
-                              company_discrepancies: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+                              company_discrepancies: List[Dict[str, Any]]) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
         """
         Remove opposite sign pairs from discrepancy lists.
         Maintains deterministic order and preserves source attribution.
+        Returns the filtered bank and company discrepancy lists separately.
         """
         # Build amount lookup for company discrepancies
         company_amounts = [tx.get('Debit/Credit', 0.0) for tx in company_discrepancies]
@@ -174,8 +190,71 @@ class ReconciliationService:
             tx for tx, used in zip(company_discrepancies, company_used) if not used
         ]
 
-        # Merge and return
-        return filtered_bank + filtered_company
+        return filtered_bank, filtered_company
+
+    def _pair_mate_amounts_match(self, amount1: float, amount2: float) -> bool:
+        """
+        Check if two amounts match after rounding to whole numbers,
+        with a 1 Rs margin of error relief. Compares magnitudes, since
+        pair-mate only matches strictly opposite-sign entries.
+        """
+        return abs(
+            self._round_amount(abs(amount1)) - self._round_amount(abs(amount2))
+        ) <= PAIR_MATE_MARGIN
+
+    def _remove_pair_mate_pairs(self,
+                                bank_discrepancies: List[Dict[str, Any]],
+                                company_discrepancies: List[Dict[str, Any]]) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], int]:
+        """
+        Pair-mate filter: within each source separately, cancel same-date,
+        strictly opposite-sign, equal-amount (with 1 Rs margin) pairs.
+        Each entry can be consumed at most once (1:1 semantics).
+        Returns the filtered bank and company lists plus the number of
+        pairs removed.
+        """
+        filtered_bank, pairs_bank = self._filter_pair_mate_within(bank_discrepancies)
+        filtered_company, pairs_company = self._filter_pair_mate_within(company_discrepancies)
+        return filtered_bank, filtered_company, pairs_bank + pairs_company
+
+    def _filter_pair_mate_within(self,
+                                 discrepancies: List[Dict[str, Any]]) -> Tuple[List[Dict[str, Any]], int]:
+        """
+        Cancel same-date opposite-sign pairs within a single discrepancy list.
+        Preserves the original order of the surviving entries.
+        """
+        used = [False] * len(discrepancies)
+        remaining = []
+        pairs = 0
+
+        for i, tx in enumerate(discrepancies):
+            if used[i]:
+                continue
+            amount = tx.get('Debit/Credit', 0.0)
+            date = tx.get('Transaction_date')
+            partner = None
+
+            for j in range(i + 1, len(discrepancies)):
+                if used[j]:
+                    continue
+                other = discrepancies[j]
+                # Same date + strictly opposite signs + equal amount (1 Rs margin)
+                if (
+                    date is not None
+                    and date == other.get('Transaction_date')
+                    and amount * other.get('Debit/Credit', 0.0) < 0
+                    and self._pair_mate_amounts_match(amount, other.get('Debit/Credit', 0.0))
+                ):
+                    partner = j
+                    break
+
+            if partner is not None:
+                used[i] = True
+                used[partner] = True
+                pairs += 1
+            else:
+                remaining.append(tx)
+
+        return remaining, pairs
 
 
 # وَإِنَّ اللَّهَ لَهُوَ خَيْرُ الرَّازِقِين

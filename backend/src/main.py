@@ -162,12 +162,14 @@ async def log_requests(request, call_next):
 
 # Import API routes and middleware
 from src.api.routes import router as api_router
+from src.api.ai_routes import router as ai_router
 from src.api.cloud_routes import router as cloud_router
 from src.api.middleware import rate_limit_middleware, security_middleware
 from src.api.auth_middleware import auth_middleware
 
 # Include API routes
 app.include_router(api_router, tags=["api"])
+app.include_router(ai_router, tags=["ai"])
 app.include_router(cloud_router)
 
 # Add security middleware (order: auth first, then security, then rate-limit)

@@ -75,35 +75,36 @@ if ($NeedsRefresh) {
                 [Environment]::GetEnvironmentVariable("Path", "Process")
 }
 
-# ── 5. Backend venv + pip install ────────────────────────────────────────────
+# ── 5. Backend uv sync ──────────────────────────────────────────────────────
 $BackendDir = Join-Path $RootDir "backend"
-$VenvDir    = Join-Path $BackendDir ".venv"
-$PythonExe  = "python"
 
-Write-Host "`n» Setting up Python virtual environment..." -ForegroundColor Yellow
-if (-not (Test-Path $VenvDir)) {
-    & $PythonExe -m venv $VenvDir
-    if ($LASTEXITCODE -ne 0) {
-        Write-Host "  ✖ Failed to create virtual environment" -ForegroundColor Red
+Write-Host "`n» Setting up backend environment with uv..." -ForegroundColor Yellow
+if (-not (Get-Command "uv" -ErrorAction SilentlyContinue)) {
+    Write-Host "  ⚠ uv not found. Installing uv..." -ForegroundColor Magenta
+    try {
+        $proc = Start-Process -Wait -PassThru -NoNewWindow `
+            -FilePath "powershell" `
+            -ArgumentList "-NoProfile -ExecutionPolicy Bypass -Command `"irm https://astral.sh/uv/install.ps1 | iex`""
+        if ($proc.ExitCode -ne 0) {
+            Write-Host "  ✖ Failed to install uv" -ForegroundColor Red
+            exit 1
+        }
+        $env:Path = "$env:USERPROFILE\.local\bin;$env:Path"
+        Write-Host "  ✓ uv installed" -ForegroundColor Green
+    } catch {
+        Write-Host "  ✖ Failed to install uv : $_" -ForegroundColor Red
         exit 1
     }
-    Write-Host "  ✓ Virtual environment created" -ForegroundColor Green
-} else {
-    Write-Host "  ✓ Virtual environment already exists" -ForegroundColor Green
 }
 
-# Determine pip path
-$PipExe = Join-Path $VenvDir "Scripts\pip.exe"
-if (-not (Test-Path $PipExe)) { $PipExe = Join-Path $VenvDir "Scripts\pip3.exe" }
-
-Write-Host "» Installing backend Python dependencies..." -ForegroundColor Yellow
-$ReqFile = Join-Path $BackendDir "requirements.prod.txt"
-if (-not (Test-Path $ReqFile)) { $ReqFile = Join-Path $BackendDir "requirements.txt" }
-& $PipExe install -r $ReqFile
+Push-Location $BackendDir
+& "uv" sync
 if ($LASTEXITCODE -ne 0) {
-    Write-Host "  ✖ Failed to install backend dependencies" -ForegroundColor Red
+    Write-Host "  ✖ Failed to sync backend dependencies" -ForegroundColor Red
+    Pop-Location
     exit 1
 }
+Pop-Location
 Write-Host "  ✓ Backend dependencies installed" -ForegroundColor Green
 
 # ── 6. Frontend npm install ─────────────────────────────────────────────────

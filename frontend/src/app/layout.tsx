@@ -1,16 +1,18 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import { Space_Grotesk, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import AuthSessionProvider from "@/components/providers/session-provider";
+import { ThemeProvider } from "@/components/providers/theme-provider";
 import SessionStatus from "@/components/auth/session-status";
+import { ThemeToggle } from "@/components/theme/theme-toggle";
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
+const spaceGrotesk = Space_Grotesk({
+  variable: "--font-sans",
   subsets: ["latin"],
 });
 
 const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
+  variable: "--font-mono",
   subsets: ["latin"],
 });
 
@@ -27,18 +29,29 @@ export default function RootLayout({
   return (
     <html
       lang="en"
-      className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
+      suppressHydrationWarning
+      className={`${spaceGrotesk.variable} ${geistMono.variable} h-full antialiased`}
     >
       <body className="min-h-full flex flex-col">
-        <AuthSessionProvider>
-          <header className="flex items-center justify-between border-b border-gray-200 bg-white px-6 py-3">
-            <span className="text-lg font-semibold text-gray-900">
-              Bank Reconciliation
-            </span>
-            <SessionStatus />
-          </header>
-          <main className="flex-1">{children}</main>
-        </AuthSessionProvider>
+        <ThemeProvider
+          attribute="class"
+          defaultTheme="system"
+          enableSystem
+          disableTransitionOnChange
+        >
+          <AuthSessionProvider>
+            <header className="flex items-center justify-between border-b border-gray-200 bg-white px-6 py-3 dark:border-gray-800 dark:bg-gray-950">
+              <span className="text-lg font-semibold text-gray-900 dark:text-gray-100">
+                Bank Reconciliation
+              </span>
+              <div className="flex items-center gap-3">
+                <ThemeToggle />
+                <SessionStatus />
+              </div>
+            </header>
+            <main className="flex-1">{children}</main>
+          </AuthSessionProvider>
+        </ThemeProvider>
       </body>
     </html>
   );

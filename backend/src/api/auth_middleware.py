@@ -13,7 +13,10 @@ logger = logging.getLogger(__name__)
 
 # وَهُوَ عَلَى كُلِّ شَيْءٍ قَدِيرٌ
 AUTH_EXEMPT_PATHS = {"/health", "/docs", "/redoc", "/openapi.json"}
-AUTH_EXEMPT_PREFIXES = {"/health", "/docs", "/redoc", "/openapi.json", "/karwai", "/history"}
+AUTH_EXEMPT_PREFIXES = {
+    "/health", "/docs", "/redoc", "/openapi.json",
+    "/karwai", "/reconcile-ai", "/history",
+}
 
 
 async def auth_middleware(request: Request, call_next):
