@@ -9,11 +9,14 @@ from typing import List
 
 
 class BankTransaction(BaseModel):
-    """Individual transaction from bank statement"""
+    """Individual transaction from bank statement.
+
+    Bank convention: Credit = positive (money in), Debit = negative (money out).
+    """
 
     Transaction_date: str = Field(..., description="Transaction date in YYYY-MM-DD format")
     Transaction_Detail: str = Field(..., description="Transaction description")
-    Debit_Credit: float = Field(..., description="Amount with sign (positive for credit, negative for debit)")
+    Debit_Credit: float = Field(..., description="Amount with sign (positive = credit, negative = debit)")
 
     model_config = {
         "json_schema_extra": {
@@ -34,11 +37,14 @@ class BankTransaction(BaseModel):
 
 
 class CompanyTransaction(BaseModel):
-    """Individual transaction from company records"""
+    """Individual transaction from company records.
+
+    Company convention: Debit = positive (money out), Credit = negative (money in).
+    """
 
     Transaction_date: str = Field(..., description="Transaction date in YYYY-MM-DD format")
     Transaction_Detail: str = Field(..., description="Transaction description")
-    Debit_Credit: float = Field(..., description="Amount with sign (positive for credit, negative for debit)")
+    Debit_Credit: float = Field(..., description="Amount with sign (positive = debit, negative = credit)")
 
     model_config = {
         "json_schema_extra": {
@@ -46,12 +52,12 @@ class CompanyTransaction(BaseModel):
                 {
                     "Transaction_date": "2026-05-04",
                     "Transaction_Detail": "Salaries IIAP mo Apr-26",
-                    "Debit_Credit": -17929400.0
+                    "Debit_Credit": 17929400.0
                 },
                 {
                     "Transaction_date": "2026-05-04",
                     "Transaction_Detail": "Fund Transfer Through RTGS from SBL to MCB BANK ISB",
-                    "Debit_Credit": 22000000.0
+                    "Debit_Credit": -22000000.0
                 }
             ]
         }
@@ -59,11 +65,15 @@ class CompanyTransaction(BaseModel):
 
 
 class DiscrepancyTransaction(BaseModel):
-    """Transaction present in one source but not the other"""
+    """Transaction present in one source but not the other.
+
+    Sign follows the source's own convention: Bank credit + / debit -;
+    Company (and vendor) credit - / debit +.
+    """
 
     Transaction_date: str = Field(..., description="Transaction date in YYYY-MM-DD format")
     Transaction_Detail: str = Field(..., description="Transaction description")
-    Debit_Credit: float = Field(..., description="Amount with sign (positive for credit, negative for debit)")
+    Debit_Credit: float = Field(..., description="Amount with sign (per the source's convention: Bank credit +/debit -; Company credit -/debit +)")
     FROM: str = Field(..., description="Source of this discrepancy: 'Bank' or 'Company'")
     from_past: bool = Field(False, description="Whether this entry originated from a loaded history file")
 

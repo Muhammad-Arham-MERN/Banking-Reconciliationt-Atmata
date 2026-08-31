@@ -28,10 +28,10 @@ import { DiscrepancyTransaction } from './reconciliation.types';
  * value polarity (positive/negative) according to accounting conventions.
  */
 export enum TransactionCategory {
-  /** Company records with negative values - checks issued but not yet presented to bank */
+  /** Company records with negative values (Company credit) - checks issued but not yet presented to bank */
   UNPRESENTED_CHECKS = "UNPRESENTED CHECKS",
 
-  /** Company records with positive values - checks received but not yet cleared */
+  /** Company records with positive values (Company debit) - checks received but not yet cleared */
   UNCLEARED_CHECKS = "UNCLEARED CHECKS",
 
   /** Bank statement entries with positive values (credit, money in) - not recorded in company cash book */
@@ -40,10 +40,10 @@ export enum TransactionCategory {
   /** Bank statement entries with negative values (debit, money out) - not recorded in company cash book */
   BANK_DEBITED_NOT_CREDITED = "BANK DEBITED BUT NOT CREDITED IN CASH BOOK",
 
-  /** Vendor ledger entries with positive values - not recorded in company cash book */
+  /** Vendor ledger entries with negative values (vendor credit) - not recorded in company cash book */
   VENDOR_CREDITED_NOT_DEBITED = "VENDOR CREDITED BUT NOT DEBITED IN CASH BOOK",
 
-  /** Vendor ledger entries with negative values - not recorded in company cash book */
+  /** Vendor ledger entries with positive values (vendor debit) - not recorded in company cash book */
   VENDOR_DEBITED_NOT_CREDITED = "VENDOR DEBITED BUT NOT CREDITED IN CASH BOOK"
 }
 
@@ -62,7 +62,7 @@ export interface CategorizedTransaction extends DiscrepancyTransaction {
   /** Transaction description/details */
   'Transaction Detail': string;
 
-  /** Raw amount with sign (positive for credit, negative for debit) */
+  /** Raw amount with the pure source-specific sign (Bank: credit +/debit -; Company: credit -/debit +) */
   'Debit/Credit': number;
 
   /** Source identifier: 'Bank' or 'Company' */
@@ -74,7 +74,7 @@ export interface CategorizedTransaction extends DiscrepancyTransaction {
   /** Unique identifier for selection tracking */
   itemId: string;
 
-  /** Display amount (Bank amounts inverted per existing convention) */
+  /** Display amount (same as the raw wire value — no inversion) */
   displayAmount: number;
 
   /** Formatted PKR currency string for display (e.g., "+PKR 40,771.70", "-PKR 17,929.40") */

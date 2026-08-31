@@ -256,6 +256,8 @@ Automated reconciliation system that:
 - Anyone performing regular bank reconciliation tasks
 
 ## Active Technologies
+- Python `>=3.13` (backend); TypeScript `^5` with React `19.2.4` on Next.js `16.2.9` App Router (frontend) + FastAPI `>=0.104.1`, `uvicorn[standard]`, `openai-agents[litellm]` (OpenAI Agents SDK + LiteLLM, Gemini family via `settings.AI_MODEL`/`AI_API_KEY`), pydantic `>=2.5.0`, pandas `2.1.4` (backend); shadcn/ui `^4.11.0` (base-nova, `@base-ui/react`), Tailwind CSS `^4.3.3`, `lucide-react`, `next-themes` (frontend) (007-ai-reconciler-advisor)
+- CockroachDB via raw `asyncpg` (`DatabaseService`, `reconciliation_data` JSONB) for the existing cloud save; the advisor itself is **stateless** — no new persistence (FR-008a). SQLite history layer exists but is not extended. (007-ai-reconciler-advisor)
 
 - Python 3.11 (backend, FastAPI) + TypeScript/Next.js 14 (frontend, App Router) (005-ai-data-extraction)
 - `openai-agents` (OpenAI Agents SDK), `litellm` (model provider abstraction), `pdfplumber`, `pandas`/`openpyxl`, `pydantic`, `fastapi`, `python-multipart`, `asyncio` (005-ai-data-extraction)
@@ -266,4 +268,4 @@ Automated reconciliation system that:
 - 005-ai-data-extraction: Added Python 3.11 (backend, FastAPI); TypeScript/Next.js 14 (frontend, App Router)
 - 005-ai-data-extraction: Added `openai-agents` (OpenAI Agents SDK), `litellm` (model provider abstraction, already referenced in test.py), `pdfplumber` (PDF word geometry + extraction), `pandas`/`openpyxl` (Excel), `pydantic` (response parsing), `fastapi`, `python-multipart` (uploads), `asyncio` (parallel detection)
 
-**Last updated**: 2026-08-06
+**Last updated**: 2026-08-26

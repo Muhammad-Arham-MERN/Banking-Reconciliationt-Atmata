@@ -244,6 +244,53 @@ def _slice_words_to_columns(words: list[dict], boundaries: list[float]) -> list[
 
 
 # وَهُوَ عَلَى كُلِّ شَيْءٍ قَدِيرٌ
+def _merge_details_continuation(
+    ordered_lines: list[tuple[float, list[dict]]],
+    index: int,
+    details_idx: int,
+    boundaries: list[float],
+    compiled_date: "re.Pattern",
+    max_lines: int = 3,
+) -> str:
+    """Merge a transaction's description from the FOLLOWING visual line(s).
+
+    Many statements print the date + amount on one visual line and the
+    description/narrative on the next line (or wrapped across lines) - e.g.
+    eStatement_6-1-1-20311 rows where the amount row has no Particulars and
+    the description sits on the line below. The single-line slicer would
+    return an empty details cell for those transactions.
+
+    Starting at `ordered_lines[index]` (the dated row), this looks ahead at
+    the immediately-following lines that are NOT themselves dated rows and
+    appends their details-column words to the row's details cell.
+
+    Stop conditions:
+      - a line whose first-column cell matches the date pattern (a new
+        transaction row - do NOT swallow it),
+      - `max_lines` look-ahead reached (safety bound, default 3).
+
+    Shared with the production extractor (ai_pdf_processor.extract_pdf), which
+    imports it from here, so the assessor and the pipeline produce identical
+    rows.
+    """
+    merged: list[str] = []
+    for j in range(1, max_lines + 1):
+        if index + j >= len(ordered_lines):
+            break
+        _ntop, nwords = ordered_lines[index + j]
+        if not nwords:
+            break
+        ncells = _slice_words_to_columns(nwords, boundaries)
+        # A new dated row ends the continuation.
+        first = ncells[0].strip() if ncells else ""
+        if first and compiled_date.match(first):
+            break
+        if details_idx < len(ncells) and ncells[details_idx].strip():
+            merged.append(ncells[details_idx].strip())
+    return " ".join(merged)
+
+
+# وَهُوَ عَلَى كُلِّ شَيْءٍ قَدِيرٌ
 def extract_pdf_words(
     pdf_path: str | Path,
     columns: List[str],
@@ -253,13 +300,15 @@ def extract_pdf_words(
     band_top: Optional[float | List[Optional[float]]] = None,
     date_pattern: str = DEFAULT_DATE_PATTERN,
     name_based: bool = True,
+    details_column: Optional[str] = None,
 ) -> Tuple[List[Dict[str, str]], int]:
     """Extract transaction rows from ALL pages using the production logic.
 
     Mirrors backend/src/services/ai_pdf_processor.py::extract_pdf exactly
-    (per-page band/header filters, per-page dedup, center-based column slice),
-    so the assessor measures the SAME output the production pipeline would
-    produce with the proposed structure.
+    (per-page band/header filters, per-page dedup, center-based column slice,
+    and the up-to-3-line details-continuation merge when `details_column` is
+    set), so the assessor measures the SAME output the production pipeline
+    would produce with the proposed structure.
 
     The row-marker and column assignment differ by `name_based`:
       - name_based=True (default): each column NAME is mapped to its physical
@@ -297,13 +346,15 @@ def extract_pdf_words(
                 if in_band and below_header:
                     lines.setdefault(top, []).append(w)
 
+            ordered_lines = sorted(lines.items())
+
             # Dedup is PER-PAGE (same as production).
             seen_tops: set[float] = set()
-            for top in sorted(lines):
+            for idx, (top, line_words) in enumerate(ordered_lines):
                 if top in seen_tops:
                     continue
                 seen_tops.add(top)
-                cells = _slice_words_to_columns(lines[top], boundaries or [])
+                cells = _slice_words_to_columns(line_words, boundaries or [])
                 if not cells:
                     continue
                 # Row marker: name-based uses the slice mapped to the first
@@ -323,6 +374,26 @@ def extract_pdf_words(
                         else:
                             idx = i
                         row[name] = cells[idx] if idx < len(cells) else ""
+                    # Two-line transaction layout: merge the narrative from the
+                    # following non-dated lines into an empty details cell.
+                    if details_column:
+                        details_idx = slice_map.get(details_column)
+                        details_idx = details_idx if details_idx is not None else (
+                            columns.index(details_column) if details_column in columns else None
+                        )
+                        if (
+                            details_idx is not None
+                            and not row.get(details_column, "").strip()
+                        ):
+                            merged = _merge_details_continuation(
+                                ordered_lines,
+                                idx,
+                                details_idx,
+                                boundaries or [],
+                                compiled,
+                            )
+                            if merged:
+                                row[details_column] = merged
                     rows.append(row)
 
     return rows, page_count
@@ -1439,6 +1510,7 @@ def assess_pdf_structure(
     name_based: bool = True,
     opening_balance: Optional[float] = None,
     reconciliation_type: str = "bank",
+    entity_name: Optional[str] = None,
     run_kabir: bool = True,
     use_assessor_llm: bool = True,
     use_ihsan: bool = True,
@@ -1554,8 +1626,8 @@ def assess_pdf_structure(
             "issues": ["columns list is empty - nothing to assess."],
             "suggestions": ["Provide at least one column name (the first column "
                             "must be the transaction-date column)."],
+            "entity_name": entity_name,
         }
-
     # Determine the page count first so per-page values can be normalized
     # against the agent's contract (scalar = same on all pages; list = the
     # values for pages 1..N with the LAST as canonical for the rest).
@@ -1592,6 +1664,7 @@ def assess_pdf_structure(
             "suggestions": ["Emit band_top and header_top as a single scalar "
                             "when all pages match, or [page1, page2] when "
                             "page 1 differs from the canonical pages."],
+            "entity_name": entity_name,
         }
 
     rows, _ = extract_pdf_words(
@@ -1603,6 +1676,7 @@ def assess_pdf_structure(
         band_top=band_top,
         date_pattern=date_pattern,
         name_based=name_based,
+        details_column=pdf_details_column,
     )
 
     # Column-name -> physical slice index mapping (name-based only).
@@ -2255,6 +2329,7 @@ def assess_pdf_structure(
         "extracted_rows": rows,
         "column_mapping": column_mapping,
         "name_based": name_based,
+        "entity_name": entity_name,
     }
 
 

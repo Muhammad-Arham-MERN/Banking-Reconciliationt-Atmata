@@ -24,6 +24,10 @@ export interface DiscrepancyTransaction {
   'Debit/Credit': number;
   'FROM': 'Bank' | 'Company';
   'from_past'?: boolean;
+  /** Stable backend-generated key (e.g. "Bank:1"), assigned during
+   *  reconciliation (FR-002, AI Reconciler Advisor). Never rendered in the
+   *  UI — used only for internal resolution/removal. */
+  discrepancy_id?: string;
 }
 
 // Reconciliation Summary Interface

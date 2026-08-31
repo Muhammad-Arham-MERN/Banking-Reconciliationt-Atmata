@@ -131,11 +131,11 @@ export const FIELD_LABELS = {
 
   // Column mapping fields (debit+credit format)
   TRANSACTION_DATE_COLUMN_LABEL: 'Transaction Date Column',
-  TRANSACTION_DATE_COLUMN_PLACEHOLDER: 'e.g., Date, Transaction Date',
+  TRANSACTION_DATE_COLUMN_PLACEHOLDER: 'Posting Date',
   DEBIT_PLUS_CREDIT_COLUMN_LABEL: 'Debit + Credit Column',
-  DEBIT_PLUS_CREDIT_COLUMN_PLACEHOLDER: 'e.g., Deb./Cred. (LC), Amount',
+  DEBIT_PLUS_CREDIT_COLUMN_PLACEHOLDER: 'Deb./Cred. (LC)',
   TRANSACTION_DETAILS_COLUMN_LABEL: 'Transaction Details Column',
-  TRANSACTION_DETAILS_COLUMN_PLACEHOLDER: 'e.g., Description, Memo, Notes',
+  TRANSACTION_DETAILS_COLUMN_PLACEHOLDER: 'Transaction Details',
 
   // Column mapping fields (debit|credit format)
   DEBIT_COLUMN_LABEL: 'Debit Column',
@@ -145,7 +145,7 @@ export const FIELD_LABELS = {
 
   // Aggregated Total column
   AGGREGATED_TOTAL_COLUMN_LABEL: 'Aggregated Total Column',
-  AGGREGATED_TOTAL_COLUMN_PLACEHOLDER: 'e.g., Aggregated Total, Grand Total, Total',
+  AGGREGATED_TOTAL_COLUMN_PLACEHOLDER: 'Cumulative Balance (LC)',
 
   // Submit button
   SUBMIT_BUTTON_LABEL: 'Submit for Processing',

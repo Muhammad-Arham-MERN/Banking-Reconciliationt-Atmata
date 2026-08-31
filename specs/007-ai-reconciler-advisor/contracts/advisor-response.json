@@ -1,0 +1,57 @@
+{
+  "suggestions": [
+    {
+      "keys": ["Bank:1", "Bank:2", "Company:1"],
+      "type": "BROKEN_CHEQUE",
+      "company_items": [
+        {
+          "discrepancy_id": "Company:1",
+          "date": "2026-07-11",
+          "details": "Cheque #1021 full amount",
+          "debit_credit": -179000,
+          "source": "Company"
+        }
+      ],
+      "bank_items": [
+        {
+          "discrepancy_id": "Bank:1",
+          "date": "2026-07-10",
+          "details": "Cheque #1021 withdrawal",
+          "debit_credit": 79000,
+          "source": "Bank"
+        },
+        {
+          "discrepancy_id": "Bank:2",
+          "date": "2026-07-12",
+          "details": "Cheque #1021 partial",
+          "debit_credit": 100000,
+          "source": "Bank"
+        }
+      ],
+      "reason": "Broken cheque by company: company -179,000 equals bank +179,000 (79,000 + 100,000), consistent with the running Bank/Company totals."
+    },
+    {
+      "keys": ["Company:2", "Company:3"],
+      "type": "REVERSAL",
+      "company_items": [
+        {
+          "discrepancy_id": "Company:2",
+          "date": "2026-07-19",
+          "details": "Payment reversal - invoice 431",
+          "debit_credit": -45000,
+          "source": "Company"
+        },
+        {
+          "discrepancy_id": "Company:3",
+          "date": "2026-07-24",
+          "details": "Reversal of payment 431",
+          "debit_credit": 45000,
+          "source": "Company"
+        }
+      ],
+      "bank_items": [],
+      "reason": "Reversal checks: -45,000 on 2026-07-19 and +45,000 on 2026-07-24 are equal-magnitude opposite-signed entries near in date, with reversal language in the details."
+    }
+  ],
+  "chat_message": "I found 2 reconcilable sets: a broken cheque (bank 79,000 + 100,000 vs company 179,000) and a reversal (company -45,000 / +45,000). Review them below and use Reconcile if you agree."
+}

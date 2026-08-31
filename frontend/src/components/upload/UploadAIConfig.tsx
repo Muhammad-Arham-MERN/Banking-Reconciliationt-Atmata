@@ -346,7 +346,7 @@ export function UploadAIConfig() {
               <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
                 {reconciliationType === 'bank'
                   ? 'Bank statement: Credit is +, Debit is - (standard).'
-                  : 'Vendor ledger: Debit is +, Credit is - (inverted signs).'}
+                  : 'Vendor ledger: Debit is +, Credit is - (own convention).'}
               </p>
             </div>
             <div className="bg-white/70 border border-gray-200 rounded-lg p-4 max-w-md mx-auto dark:bg-gray-900/70 dark:border-gray-800">

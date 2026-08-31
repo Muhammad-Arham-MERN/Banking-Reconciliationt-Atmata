@@ -23,10 +23,10 @@ function formatAmount(amount: number): string {
   return amount >= 0 ? `+${formatted}` : `-${formatted}`;
 }
 
-/** Bank statement amounts use inverted sign convention — flip for display only */
+/** Wire Debit/Credit carries the pure source-specific sign convention
+ *  (Bank: credit + / debit -; Company: credit - / debit +); display as-is. */
 function getDisplayAmount(discrepancy: DiscrepancyTransaction): number {
-  const raw = discrepancy['Debit/Credit'];
-  return discrepancy.FROM === 'Bank' ? -raw : raw;
+  return discrepancy['Debit/Credit'];
 }
 
 export function DiscrepancyList({ discrepancies }: DiscrepancyListProps) {

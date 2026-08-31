@@ -10,8 +10,9 @@ from typing import Dict, Any, List, Optional, Tuple
 import pandas as pd
 
 from src.utils.data_transformers import (
-    normalize_excel_date, merge_debit_credit, convert_combined_amount,
-    standardize_transaction_data, clean_transaction_detail
+    normalize_excel_date,
+    standardize_transaction_data, merge_company_debit_credit,
+    clean_transaction_detail
 )
 from src.utils.logger import (
     log_excel_extraction, log_transformation_stats,
@@ -251,9 +252,16 @@ class ExcelProcessor:
                     # Clean transaction detail
                     cleaned_detail = clean_transaction_detail(str(detail_value))
 
-                    # Create standardized transaction based on format type
+                    # Create standardized transaction based on format type.
+                    # The COMPANY convention is used directly (no sign flips):
+                    #   - Company Debit  (money out) = POSITIVE
+                    #   - Company Credit (money in)  = NEGATIVE
+                    # The 3-column combined amount column already carries the
+                    # file's own sign (debit +, credit -), so it is preserved
+                    # as-is. The 4-column separate debit/credit columns are
+                    # merged with the company convention directly.
                     if format_type == 'debit-plus-credit':
-                        # 3-column format: combined amount
+                        # 3-column format: combined amount, preserve file sign
                         amount_value = row.get('combined_amount')
                         transaction = standardize_transaction_data(
                             date_value=date_value,
@@ -264,17 +272,20 @@ class ExcelProcessor:
                             source_type='excel'
                         )
                     else:  # debit-pipe-credit
-                        # 4-column format: separate debit/credit
+                        # 4-column format: separate debit/credit columns merged
+                        # under the company convention (debit +, credit -).
                         debit_value = row.get('debit_amount')
                         credit_value = row.get('credit_amount')
-                        transaction = standardize_transaction_data(
-                            date_value=date_value,
-                            detail_value=cleaned_detail,
-                            amount_value=None,
-                            debit_value=debit_value,
-                            credit_value=credit_value,
-                            source_type='excel'
-                        )
+                        merged = merge_company_debit_credit(debit_value, credit_value)
+                        transaction = None
+                        if merged is not None:
+                            transaction = {
+                                "Transaction_date": normalize_excel_date(date_value),
+                                "Transaction Detail": cleaned_detail,
+                                "Debit/Credit": merged,
+                            }
+                            if transaction["Transaction_date"] is None:
+                                transaction = None
 
                     if transaction:
                         standardized_transactions.append(transaction)

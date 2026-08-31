@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback, useMemo } from 'react';
+import { useState, useCallback, useMemo, useRef } from 'react';
 import { useSession } from 'next-auth/react';
 import { ReconciliationResult, DiscrepancyTransaction } from '@/types/reconciliation.types';
 import { CategorizedResults } from '@/components/results/CategorizedResults';
@@ -14,7 +14,7 @@ import {
   CardTitle,
 } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { CheckCircle2, Clock, FileSearch, RotateCcw, Save } from 'lucide-react';
+import { CheckCircle2, Clock, FileSearch, MessagesSquare, RotateCcw, Save, Wand2 } from 'lucide-react';
 import {
   generateItemId,
   getDisplayAmount
@@ -23,6 +23,15 @@ import { formatAmount } from '@/lib/utils/categorizationUtils';
 import { cloudHistoryClient } from '@/lib/api/cloudHistoryClient';
 import type { CloudHistoryEntry } from '@/types/cloud-history.types';
 import { Input } from '@/components/ui/input';
+import { AdvisorPanel } from '@/components/advisor/AdvisorPanel';
+import { AdvisorChat } from '@/components/advisor/AdvisorChat';
+import { runAdvisorReconcile, cancelAdvisorRun } from '@/lib/api/advisorClient';
+import type {
+  AdvisorDiscrepancy,
+  AdvisorResponse,
+  BalanceContext,
+  BalancePoint,
+} from '@/types/advisor.types';
 
 interface ReconciliationResultsProps {
   result: ReconciliationResult;
@@ -109,6 +118,130 @@ export function ReconciliationResults({ result, onStartNew }: ReconciliationResu
     setSelectedItems(new Set());
   }, []);
 
+  // ---- AI Reconciler Advisor (Subh al Baqaya, feature 007) ----
+  // State is component-local (FR-013): resets on new reconciliation / fresh
+  // page load because the component remounts with a new result.
+  const [advisorResponse, setAdvisorResponse] = useState<AdvisorResponse | null>(null);
+  const [advisorRunning, setAdvisorRunning] = useState(false);
+  const [advisorError, setAdvisorError] = useState<string | null>(null);
+  const advisorAbortRef = useRef<AbortController | null>(null);
+
+  // Stable backend keys (discrepancy_id) for the items sent to the agent.
+  const liveKeys = useMemo(
+    () =>
+      new Set<string>(
+        discrepancies.map((d) => d.discrepancy_id).filter((id): id is string => Boolean(id))
+      ),
+    [discrepancies]
+  );
+
+  const buildBalanceContext = useCallback(
+    (items: DiscrepancyTransaction[]): BalanceContext => {
+      let bankRunning = 0;
+      let companyRunning = 0;
+      const points: BalancePoint[] = items.map((d, index) => {
+        const amount = d['Debit/Credit'] ?? 0;
+        if (d.FROM === 'Company') {
+          companyRunning += amount;
+        } else {
+          bankRunning += amount;
+        }
+        return {
+          index: index + 1,
+          discrepancy_id: d.discrepancy_id ?? '',
+          bank_running: bankRunning,
+          company_running: companyRunning,
+          net: bankRunning + companyRunning,
+        };
+      });
+      return {
+        points,
+        bank_balance: bankRunning,
+        company_balance: companyRunning,
+      };
+    },
+    []
+  );
+
+  const buildAdvisorDiscrepancies = useCallback(
+    (items: DiscrepancyTransaction[]): AdvisorDiscrepancy[] =>
+      items.map((d) => ({
+        discrepancy_id: d.discrepancy_id ?? '',
+        Transaction_date: d['Transaction_date'],
+        // Safe underscore wire key; the raw discrepancy dict uses the spaced
+        // "Transaction Detail" — mapped here at the boundary.
+        Transaction_Detail: d['Transaction Detail'],
+        'Debit/Credit': d['Debit/Credit'],
+        FROM: d.FROM,
+        from_past: d.from_past,
+      })),
+    []
+  );
+
+  const handleRunAdvisor = useCallback(async () => {
+    const token = (session?.user as { access_token?: string } | undefined)?.access_token;
+    if (!token) {
+      setAdvisorError('Not authenticated. Please sign in again.');
+      return;
+    }
+    if (discrepancies.length === 0) return;
+
+    setAdvisorRunning(true);
+    setAdvisorError(null);
+    setAdvisorResponse(null);
+
+    const controller = new AbortController();
+    advisorAbortRef.current = controller;
+
+    try {
+      const request = {
+        request_id,
+        discrepancies: buildAdvisorDiscrepancies(discrepancies),
+        context: buildBalanceContext(discrepancies),
+        history: [],
+        question: null,
+      };
+      const response = await runAdvisorReconcile(
+        token,
+        request,
+        undefined,
+        controller.signal
+      );
+      setAdvisorResponse(response);
+    } catch (err) {
+      if (err instanceof DOMException && err.name === 'AbortError') {
+        setAdvisorError('Agent run cancelled.');
+      } else {
+        setAdvisorError(
+          err instanceof Error ? err.message : 'The agent is unable to respond due to a technical failure.'
+        );
+      }
+    } finally {
+      setAdvisorRunning(false);
+      advisorAbortRef.current = null;
+    }
+  }, [session, discrepancies, request_id, buildAdvisorDiscrepancies, buildBalanceContext]);
+
+  const handleCancelAdvisor = useCallback(() => {
+    advisorAbortRef.current?.abort();
+    cancelAdvisorRun(request_id);
+    setAdvisorRunning(false);
+  }, [request_id]);
+
+  // Suggestion-reconcile: remove exactly the suggested items from the live
+  // main list — frontend-only (FR-010), mirroring handleReconcile's filter so
+  // the live list, manual reconcile, and Complete Reconciliation stay in sync.
+  const handleAdvisorReconcile = useCallback(
+    (keys: string[]) => {
+      setDiscrepancies(prev => {
+        const removed = new Set(keys);
+        return prev.filter(d => !removed.has(d.discrepancy_id ?? ''));
+      });
+      setSelectedItems(new Set());
+    },
+    []
+  );
+
   // Save history state
   const [saveName, setSaveName] = useState('');
   const [isSaving, setIsSaving] = useState(false);
@@ -148,19 +281,24 @@ export function ReconciliationResults({ result, onStartNew }: ReconciliationResu
   }, [discrepancies, saveName, session, reconciliationType]);
 
   // Helper: determine category from source, amount, and reconciliation mode.
+  // Wire values carry the pure source-specific convention (no flips):
+  //   Bank:    credit = +, debit = -
+  //   Company: credit = -, debit = +  (Unpresented = -, Uncleared = +)
+  //   Vendor:  credit = -, debit = +  (source-side rows)
   function categorizeDiscrepancy(from: string, amount: number, mode: 'bank' | 'vendor' = 'bank'): string {
     if (mode === 'vendor') {
-      // Vendor ledger: a positive source-side entry = credited but not debited;
-      // a negative one = debited but not credited.
+      // Vendor ledger: source-side (Bank) rows use vendor convention — a
+      // positive amount = debited but not credited; a negative one =
+      // credited but not debited.
       if (from === 'Company' && amount < 0) return 'Unpresented Checks';
       if (from === 'Company' && amount >= 0) return 'Uncleared Checks';
-      if (from === 'Bank' && amount >= 0) return 'Vendor Credited But not Debited in Cashbook';
-      return 'Vendor Debited but not Credited in Cashbook';
+      if (from === 'Bank' && amount >= 0) return 'Vendor Debited but not Credited in Cashbook';
+      return 'Vendor Credited But not Debited in Cashbook';
     }
     if (from === 'Company' && amount < 0) return 'Unpresented Checks';
     if (from === 'Company' && amount >= 0) return 'Uncleared Checks';
-    if (from === 'Bank' && amount >= 0) return 'Bank Debited But not Credited in Cashbook';
-    return 'Bank Credited But not Debited in Cashbook';
+    if (from === 'Bank' && amount >= 0) return 'Bank Credited But not Debited in Cashbook';
+    return 'Bank Debited But not Credited in Cashbook';
   }
 
   const summaryItems = [
@@ -195,7 +333,59 @@ export function ReconciliationResults({ result, onStartNew }: ReconciliationResu
             New Reconciliation
           </Button>
         )}
+        {discrepancies.length > 0 && (
+          <Button
+            variant="default"
+            onClick={advisorRunning ? handleCancelAdvisor : handleRunAdvisor}
+            disabled={advisorRunning && !advisorAbortRef.current}
+          >
+            <Wand2 data-icon="inline-start" />
+            {advisorRunning ? 'Cancel Agent Run' : 'Reconcile With Agent'}
+          </Button>
+        )}
       </div>
+
+      {advisorError && (
+        <div className="rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+          {advisorError}
+        </div>
+      )}
+
+      {(advisorResponse || advisorRunning) && (
+        <AdvisorPanel
+          advisorResponse={advisorResponse}
+          liveKeys={liveKeys}
+          onReconcile={handleAdvisorReconcile}
+          isRunning={advisorRunning}
+        />
+      )}
+
+      {advisorResponse && !advisorRunning && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <MessagesSquare className="size-4" />
+              Ask the Agent
+            </CardTitle>
+            <CardDescription>
+              Follow-up questions about the reconciliation — the agent always
+              sees the current discrepancies list.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <AdvisorChat
+              token={
+                (session?.user as { access_token?: string } | undefined)
+                  ?.access_token ?? ''
+              }
+              requestId={request_id}
+              discrepancies={discrepancies}
+              buildDiscrepancies={buildAdvisorDiscrepancies}
+              buildBalanceContext={buildBalanceContext}
+            />
+          </CardContent>
+        </Card>
+      )}
 
       <Card>
         <CardHeader>

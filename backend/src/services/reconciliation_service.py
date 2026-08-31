@@ -62,8 +62,63 @@ class ReconciliationService:
 
         final_discrepancies = bank_discrepancies + company_discrepancies
 
+        # وَهُوَ عَلَى كُلِّ شَيْءٍ قَدِيرٌ
+        # Assign a stable, backend-generated key to every final discrepancy
+        # (FR-002, AI Reconciler Advisor feature 007). The key is
+        # "<FROM>:<n>" with <n> the 1-based positional index over the final
+        # assembled list (Bank items first, then Company items, matching the
+        # final array order). Deterministic for the same inputs, collision-free
+        # across both sources, and never rendered in the frontend UI — it exists
+        # so the Reconciler Agent can reference exact items and the frontend can
+        # resolve them against the live main list.
+        counters: Dict[str, int] = {}
+        for discrepancy in final_discrepancies:
+            source = discrepancy.get("FROM", "Bank")
+            counters[source] = counters.get(source, 0) + 1
+            discrepancy["discrepancy_id"] = f"{source}:{counters[source]}"
+
         self.processing_time_ms = int((time.time() - start_time) * 1000)
         return final_discrepancies
+
+    def compute_balance_context(self, discrepancies: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """
+        Compute the cumulative Bank-vs-Company running totals over the final
+        discrepancy list (FR-002b, AI Reconciler Advisor feature 007).
+
+        Each discrepancy's signed Debit/Credit (negative = debit, positive =
+        credit) is added to its own FROM bucket only; every item produces a
+        BalancePoint (index, discrepancy_id, bank_running, company_running,
+        net = bank_running + company_running) in list order, plus the final
+        bank_balance / company_balance summary totals. The Reconciler Agent
+        uses this as a supporting mathematical check and MUST NOT propose a
+        suggestion whose sums break these running totals.
+        """
+        bank_running = 0.0
+        company_running = 0.0
+        points = []
+
+        for index, discrepancy in enumerate(discrepancies, start=1):
+            amount = discrepancy.get("Debit/Credit", 0.0)
+            source = discrepancy.get("FROM", "Bank")
+            if source == "Company":
+                company_running += amount
+            else:
+                bank_running += amount
+            points.append(
+                {
+                    "index": index,
+                    "discrepancy_id": discrepancy.get("discrepancy_id", ""),
+                    "bank_running": bank_running,
+                    "company_running": company_running,
+                    "net": bank_running + company_running,
+                }
+            )
+
+        return {
+            "points": points,
+            "bank_balance": bank_running,
+            "company_balance": company_running,
+        }
 
     def _find_bank_discrepancies(self,
                                 bank_transactions: List[Dict[str, Any]],

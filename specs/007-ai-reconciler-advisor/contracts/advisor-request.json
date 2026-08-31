@@ -1,0 +1,53 @@
+{
+  "request_id": "8f3a9c2e-1d4b-4c7a-9a1e-5b6c7d8e9f01",
+  "discrepancies": [
+    {
+      "discrepancy_id": "Bank:1",
+      "Transaction_date": "2026-07-10",
+      "Transaction_Detail": "Cheque #1021 withdrawal",
+      "Debit/Credit": 79000,
+      "FROM": "Bank"
+    },
+    {
+      "discrepancy_id": "Bank:2",
+      "Transaction_date": "2026-07-12",
+      "Transaction_Detail": "Cheque #1021 partial",
+      "Debit/Credit": 100000,
+      "FROM": "Bank"
+    },
+    {
+      "discrepancy_id": "Company:1",
+      "Transaction_date": "2026-07-11",
+      "Transaction_Detail": "Cheque #1021 full amount",
+      "Debit/Credit": -179000,
+      "FROM": "Company"
+    },
+    {
+      "discrepancy_id": "Company:2",
+      "Transaction_date": "2026-07-19",
+      "Transaction_Detail": "Payment reversal - invoice 431",
+      "Debit/Credit": -45000,
+      "FROM": "Company"
+    },
+    {
+      "discrepancy_id": "Company:3",
+      "Transaction_date": "2026-07-24",
+      "Transaction_Detail": "Reversal of payment 431",
+      "Debit/Credit": 45000,
+      "FROM": "Company"
+    }
+  ],
+  "context": {
+    "points": [
+      { "index": 1, "discrepancy_id": "Bank:1", "bank_running": 79000, "company_running": 0, "net": 79000 },
+      { "index": 2, "discrepancy_id": "Bank:2", "bank_running": 179000, "company_running": 0, "net": 179000 },
+      { "index": 3, "discrepancy_id": "Company:1", "bank_running": 179000, "company_running": -179000, "net": 0 },
+      { "index": 4, "discrepancy_id": "Company:2", "bank_running": 179000, "company_running": -224000, "net": -45000 },
+      { "index": 5, "discrepancy_id": "Company:3", "bank_running": 179000, "company_running": -179000, "net": 0 }
+    ],
+    "bank_balance": 179000,
+    "company_balance": -179000
+  },
+  "history": [],
+  "question": null
+}

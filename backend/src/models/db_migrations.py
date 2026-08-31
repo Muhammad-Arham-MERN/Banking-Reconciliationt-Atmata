@@ -78,6 +78,34 @@ CREATE INDEX IF NOT EXISTS idx_reconciliation_data_user_id
 ON reconciliation_data(user_id);
 """
 
+# ---- Judge Structure by its Cover (pdf structure profiles) -----------------
+# Stores previously-extracted PDF structures keyed by normalized entity name +
+# entity type ("bank" | "vendor"), so the Judge agent can short-circuit full
+# structure detection on repeat uploads from the same bank/vendor. The
+# `structure` JSONB holds the full FileStructureOutput contract that
+# assess_structure consumes and the deterministic extractor needs.
+CREATE_PDF_STRUCTURE_PROFILES = """
+CREATE TABLE IF NOT EXISTS pdf_structure_profiles (
+    id                     SERIAL PRIMARY KEY,
+    entity_name            VARCHAR(255) NOT NULL,
+    entity_name_normalized VARCHAR(255) NOT NULL,
+    entity_type            VARCHAR(16)  NOT NULL,   -- 'bank' | 'vendor'
+    structure              JSONB        NOT NULL,   -- full FileStructureOutput
+    created_at             TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    updated_at             TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+);
+"""
+
+CREATE_UQ_PDF_STRUCTURE_PROFILE = """
+CREATE UNIQUE INDEX IF NOT EXISTS uq_pdf_structure_profile
+ON pdf_structure_profiles(entity_name_normalized, entity_type);
+"""
+
+CREATE_IDX_PDF_STRUCTURE_PROFILE_TYPE = """
+CREATE INDEX IF NOT EXISTS idx_pdf_structure_profile_type
+ON pdf_structure_profiles(entity_type);
+"""
+
 # Ordered migration statements
 MIGRATIONS: List[str] = [
     CREATE_USERS,
@@ -88,6 +116,9 @@ MIGRATIONS: List[str] = [
     ALTER_USERS_ADD_FILES,
     ALTER_RECONCILIATION_ADD_USER_ID,
     CREATE_IDX_RECONCILIATION_USER_ID,
+    CREATE_PDF_STRUCTURE_PROFILES,
+    CREATE_UQ_PDF_STRUCTURE_PROFILE,
+    CREATE_IDX_PDF_STRUCTURE_PROFILE_TYPE,
 ]
 
 # وَإِنَّ اللَّهَ لَهُوَ خَيْرُ الرَّازِقِينَ

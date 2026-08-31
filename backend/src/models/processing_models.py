@@ -20,7 +20,7 @@ class ProcessedTransaction(BaseModel):
     """
     Transaction_date: str = Field(description="Transaction date in ISO format (YYYY-MM-DD)")
     Transaction_Detail: str = Field(description="Transaction description or narrative")
-    Debit_Credit: int = Field(description="Monetary amount (positive=debit, negative=credit)")
+    Debit_Credit: int = Field(description="Monetary amount (positive=credit, negative=debit)")
 
     class Config:
         json_schema_extra = {

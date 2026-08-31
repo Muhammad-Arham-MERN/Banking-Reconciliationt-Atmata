@@ -398,6 +398,77 @@ def merge_debit_credit(debit_value: Optional[float], credit_value: Optional[floa
         return None
 
 
+def merge_company_debit_credit(debit_value: Optional[Any], credit_value: Optional[Any]) -> Optional[float]:
+    """
+    Merge separate company cash-book debit and credit columns into a single
+    Debit/Credit value under the COMPANY convention.
+
+    The company cash book records a debit (money out, e.g. a cheque issued) as
+    a POSITIVE figure and a credit (money in) as a NEGATIVE figure. This is the
+    direct convention used end-to-end for company records:
+        Debit: positive float, Credit: negative float.
+
+    Args:
+        debit_value: Debit amount from the company file (can be None/NaN).
+        credit_value: Credit amount from the company file (can be None/NaN).
+
+    Returns:
+        Float amount (negative=credit, positive=debit) or None if invalid.
+    """
+    try:
+        # Handle NaN values from pandas
+        if pd.isna(debit_value):
+            debit_value = None
+        if pd.isna(credit_value):
+            credit_value = None
+
+        # Treat blank/whitespace strings as missing
+        if isinstance(debit_value, str) and not debit_value.strip():
+            debit_value = None
+        if isinstance(credit_value, str) and not credit_value.strip():
+            credit_value = None
+
+        # A literal zero cell is a BLANK amount cell, not a value.
+        if debit_value is not None and (
+            debit_value == 0
+            or (isinstance(debit_value, str) and parse_amount(debit_value) == 0)
+        ):
+            debit_value = None
+        if credit_value is not None and (
+            credit_value == 0
+            or (isinstance(credit_value, str) and parse_amount(credit_value) == 0)
+        ):
+            credit_value = None
+
+        # Both None - invalid
+        if debit_value is None and credit_value is None:
+            return None
+
+        # Both present - ambiguous, should not happen
+        if debit_value is not None and credit_value is not None:
+            return None
+
+        # Debit only - positive float (money out, company convention)
+        if debit_value is not None:
+            amount = parse_amount(debit_value)
+            if amount is None or amount == 0:
+                return None
+            return abs(amount)
+
+        # Credit only - negative float (money in, company convention)
+        if credit_value is not None:
+            amount = parse_amount(credit_value)
+            if amount is None or amount == 0:
+                return None
+            return -abs(amount)
+
+        return None
+
+    except Exception as e:
+        logger.error(f"Error merging company debit/credit: {str(e)}")
+        return None
+
+
 def convert_combined_amount(amount_value: Any, sign: str) -> Optional[float]:
     """
     Convert combined amount column to float with proper sign
@@ -479,7 +550,9 @@ def standardize_transaction_data(
         {"Transaction_date": "2023-01-15", "Transaction Detail": "Payment", "Debit/Credit": 100}
     """
     try:
-        # Normalize date based on source type
+        # Normalize date based on source type. A missing/unparseable date is
+        # OPTIONAL - the row is kept with an empty date rather than dropped
+        # (reconciliation matches on amount + detail, not date alone).
         if source_type == 'pdf':
             normalized_date = normalize_pdf_date(date_value)
         elif source_type == 'excel':
@@ -489,13 +562,13 @@ def standardize_transaction_data(
             return None
 
         if not normalized_date:
-            return None
+            logger.warning("Empty transaction date - keeping row with empty date")
 
-        # Clean transaction detail
+        # Clean transaction detail. Missing detail is OPTIONAL - the row is
+        # kept with an empty detail rather than dropped.
         transaction_detail = str(detail_value).strip() if detail_value else ""
         if not transaction_detail:
-            logger.warning("Empty transaction detail")
-            return None
+            logger.warning("Empty transaction detail - keeping row with empty detail")
 
         # Handle debit/credit merging
         debit_credit = None
