@@ -33,13 +33,13 @@ import {
 const INITIAL_COLUMN_MAPPING: ColumnMappingConfiguration = {
   formatType: 'debit-plus-credit',
   sheetName: 'Sheet1',
-  aggregatedTotalColumn: '',
+  aggregatedTotalColumn: 'Cumulative Balance (LC)',
   debitPlusCreditFields: {
-    transactionDateColumn: '',
-    debitPlusCreditColumn: '',
-    transactionDetailsColumn: '',
+    transactionDateColumn: 'Posting Date',
+    debitPlusCreditColumn: 'Deb./Cred. (LC)',
+    transactionDetailsColumn: 'Transaction Details',
   },
-  isComplete: false,
+  isComplete: true,
 };
 
 /**

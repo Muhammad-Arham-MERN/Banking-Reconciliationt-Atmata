@@ -17,11 +17,22 @@ import { TransactionCategory } from '@/types/categorization.types';
  * وَهُوَ عَلَى كُلِّ شَيْءٍ قَدِيرٌ
  * Categorize a transaction based on its source, value, and reconciliation type.
  *
- * For "bank" mode, the source is the bank statement (Credit +, Debit -).
- * For "vendor" mode, the source is the vendor ledger (Debit +, Credit -).
+ * The wire `Debit/Credit` value carries the pure source-specific convention
+ * (no flips):
+ *   - Bank:    Credit = positive, Debit = negative
+ *   - Company: Credit = negative, Debit = positive
+ *   - Vendor:  Credit = negative, Debit = positive
+ *
+ * Categorization:
+ *   - Bank + (credit)      -> BANK_CREDITED_NOT_DEBITED
+ *   - Bank - (debit)       -> BANK_DEBITED_NOT_CREDITED
+ *   - Company - (credit)   -> UNPRESENTED_CHECKS
+ *   - Company + (debit)    -> UNCLEARED_CHECKS
+ *   - Vendor + (debit)     -> VENDOR_DEBITED_NOT_CREDITED
+ *   - Vendor - (credit)    -> VENDOR_CREDITED_NOT_DEBITED
  *
  * @param source - The transaction source ('Bank' or 'Company')
- * @param value - The transaction value (positive for credit, negative for debit)
+ * @param value - The transaction value (source-specific signed amount)
  * @param reconciliationType - "bank" (default) or "vendor"
  * @returns The appropriate TransactionCategory enum value
  */
@@ -34,10 +45,11 @@ export function categorizeTransaction(
   const isPositive = value > 0;
 
   if (reconciliationType === 'vendor') {
-    // Vendor ledger: Credit is -, Debit is + (inverted vs a bank statement).
-    // A source-side entry that is positive = debited (money the vendor paid
-    // out / you owe) but not credited in the cash book; a negative one =
-    // credited (money the vendor received) but not debited.
+    // Vendor ledger: Credit is -, Debit is + (its own convention, not a
+    // bank-statement inversion). A source-side entry that is positive =
+    // debited (money the vendor paid out / you owe) but not credited in the
+    // cash book; a negative one = credited (money the vendor received) but
+    // not debited.
     if (isSource && isPositive) {
       return TransactionCategory.VENDOR_DEBITED_NOT_CREDITED;
     }
@@ -92,18 +104,19 @@ export function generateItemId(
 // ============================================================================
 
 /**
- * Get the display amount for a transaction with enforced sign convention
+ * Get the display amount for a transaction.
  *
- * Sign convention per category:
- *   - UNPRESENTED_CHECKS:  always negative (Company debits not yet presented)
- *   - UNCLEARED_CHECKS:    always positive (Company credits not yet cleared)
- *   - BANK_CREDITED_NOT_DEBITED: always negative (Bank credits not in cash book)
- *   - BANK_DEBITED_NOT_CREDITED: always positive (Bank debits not in cash book)
+ * The wire `Debit/Credit` value already carries the pure source-specific
+ * convention end-to-end, with NO sign flips anywhere:
+ *   - Bank:    Credit = positive, Debit = negative
+ *   - Company: Credit = negative, Debit = positive
+ *   - Vendor:  Credit = negative, Debit = positive
+ * The display therefore shows the raw value as-is.
  *
  * @param source - The transaction source ('Bank' or 'Company')
  * @param rawAmount - The raw transaction value
- * @param category - The transaction category for sign enforcement
- * @returns The display amount with enforced sign convention
+ * @param category - The transaction category (unused for sign; kept for API compat)
+ * @returns The display amount (the raw wire value)
  */
 export function getDisplayAmount(
   source: string,
@@ -111,25 +124,13 @@ export function getDisplayAmount(
   category?: TransactionCategory,
   reconciliationType: 'bank' | 'vendor' = 'bank'
 ): number {
-  if (category) {
-    switch (category) {
-      case TransactionCategory.UNPRESENTED_CHECKS:
-      case TransactionCategory.BANK_CREDITED_NOT_DEBITED:
-      case TransactionCategory.VENDOR_CREDITED_NOT_DEBITED:
-        return -Math.abs(rawAmount);       // Always negative
-      case TransactionCategory.UNCLEARED_CHECKS:
-      case TransactionCategory.BANK_DEBITED_NOT_CREDITED:
-      case TransactionCategory.VENDOR_DEBITED_NOT_CREDITED:
-        return Math.abs(rawAmount);         // Always positive
-    }
-  }
-  return rawAmount;  // Fallback: unchanged
+  return rawAmount;
 }
 
 /**
  * Resolve the display label for a category under the active reconciliation
  * mode. In "vendor" mode the Bank-side categories are replaced with their
- * vendor equivalents (a vendor ledger's debit/credit roles are inverted).
+ * vendor equivalents (a vendor ledger has its own debit/credit convention).
  */
 export function categoryLabel(
   category: TransactionCategory,

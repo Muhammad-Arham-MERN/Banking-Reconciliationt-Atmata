@@ -13,7 +13,7 @@ import pdfplumber
 
 from src.utils.data_transformers import (
     normalize_pdf_date,
-    standardize_transaction_data, clean_transaction_detail
+    standardize_transaction_data, clean_transaction_detail, parse_amount
 )
 from src.utils.logger import (
     log_pdf_extraction, log_transformation_stats,
@@ -346,10 +346,15 @@ class PDFProcessor:
                 if not valid_balance.empty:
                     last_balance = valid_balance.iloc[-1]
                     try:
-                        # Clean currency symbols and commas, then parse
-                        cleaned = str(last_balance).replace("$", "").replace(",", "").strip()
-                        if cleaned:
-                            bank_net_total["value"] = float(cleaned)
+                        # Parse with the canonical parse_amount: handles
+                        # parenthesized negatives like "(1,234.56)" -> -1234.56
+                        # (some PDF writers print a negative balance in
+                        # brackets), currency symbols, and thousands
+                        # separators — the naive float()/replace() path marked
+                        # those "invalid".
+                        parsed = parse_amount(last_balance)
+                        if parsed is not None:
+                            bank_net_total["value"] = parsed
                             bank_net_total["status"] = "found"
                         else:
                             bank_net_total["status"] = "invalid"

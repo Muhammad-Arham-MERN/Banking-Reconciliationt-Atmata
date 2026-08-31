@@ -44,10 +44,24 @@ export default function RootLayout({
               <span className="text-lg font-semibold text-gray-900 dark:text-gray-100">
                 Bank Reconciliation
               </span>
-              <div className="flex items-center gap-3">
-                <ThemeToggle />
-                <SessionStatus />
-              </div>
+              <nav className="flex items-center gap-4 text-sm font-medium">
+                <a
+                  href="/upload"
+                  className="text-gray-600 hover:text-gray-900 dark:text-gray-300 dark:hover:text-gray-100"
+                >
+                  Upload
+                </a>
+                <a
+                  href="/tests"
+                  className="text-gray-600 hover:text-gray-900 dark:text-gray-300 dark:hover:text-gray-100"
+                >
+                  Test Data
+                </a>
+                <div className="flex items-center gap-3">
+                  <ThemeToggle />
+                  <SessionStatus />
+                </div>
+              </nav>
             </header>
             <main className="flex-1">{children}</main>
           </AuthSessionProvider>

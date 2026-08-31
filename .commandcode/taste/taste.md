@@ -10,6 +10,7 @@
 
 # code-style
 - Use `/** */` JS comment blocks for file headers, never `#` hash-prefix (invalid in TypeScript/JSX files). Confidence: 0.70
+- Prefers safe identifier-style dict/contract keys (underscore form, e.g., `Transaction_Detail`) over human-spaced keys (e.g., `Transaction Detail`): spaced keys are fragile (need quoting, risk trimming/collision), while underscore keys are "safer and reliable" and consistent with the existing `Transaction_date` convention. Explicitly directed switching the discrepancy wire format to `Transaction_Detail`; a slash key like `Debit/Credit` is acceptable to keep. Confidence: 0.75
 
 # shadcn
 - Prefer using official shadcn UI components over custom hand-rolled implementations — explicitly requested the dark mode toggle "using shadcn ui (search docs)" rather than a hand-rolled theme switch. Confidence: 0.75

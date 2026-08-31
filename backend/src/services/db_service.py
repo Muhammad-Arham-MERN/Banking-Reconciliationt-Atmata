@@ -3,12 +3,50 @@
 CockroachDB database connection service
 PostgreSQL-compatible connection using asyncpg
 """
+import asyncio
 import os
 import logging
 from typing import Optional
 import asyncpg
 
 logger = logging.getLogger(__name__)
+
+# The event loop the connection pool lives on (the app's main loop, captured
+# at connect time). asyncpg connections are bound to the loop they were
+# created on, so ANY code that touches the pool - including sync tool workers
+# running in SDK threads - must schedule its coroutine onto THIS loop, never a
+# fresh one (a new loop would raise "Future attached to a different loop").
+_main_loop: Optional[asyncio.AbstractEventLoop] = None
+
+
+# وَهُوَ عَلَى كُلِّ شَيْءٍ قَدِيرٌ
+def get_main_loop() -> Optional[asyncio.AbstractEventLoop]:
+    """Return the loop the DB pool is bound to (None when not connected)."""
+    return _main_loop
+
+
+# وَهُوَ عَلَى كُلِّ شَيْءٍ قَدِيرٌ
+def run_on_main_loop(coro_factory):
+    """Run an async DB coroutine on the main loop from ANY thread.
+
+    The OpenAI Agents SDK runs sync tools in worker threads with no running
+    event loop. asyncpg pools are bound to the loop they were created on, so
+    those threads must NOT spin up their own loop - they schedule the work
+    onto the main loop (via run_coroutine_threadsafe) and block until it
+    finishes. Safe to call from the main loop thread itself too.
+    """
+    loop = _main_loop
+    if loop is None:
+        raise RuntimeError("Database not connected")
+    try:
+        running_loop = asyncio.get_running_loop()
+    except RuntimeError:
+        running_loop = None
+    if running_loop is loop:
+        return loop.run_until_complete(coro_factory())
+    future = asyncio.run_coroutine_threadsafe(coro_factory(), loop)
+    return future.result(timeout=30)
+
 
 # وَهُوَ عَلَى كُلِّ شَيْءٍ قَدِيرٌ
 class DatabaseService:
@@ -23,6 +61,7 @@ class DatabaseService:
 
     async def connect(self) -> None:
         """Initialize the connection pool"""
+        global _main_loop
         if not self._dsn:
             raise ValueError("DATABASE_URL is not configured")
         try:
@@ -32,6 +71,11 @@ class DatabaseService:
                 max_size=5,
                 command_timeout=30
             )
+            # Capture the loop the pool is bound to (the app's main loop).
+            try:
+                _main_loop = asyncio.get_running_loop()
+            except RuntimeError:
+                _main_loop = asyncio.get_event_loop()
             logger.info("Database connection pool established")
         except Exception as e:
             logger.error(f"Failed to connect to database: {e}")

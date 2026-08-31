@@ -63,18 +63,19 @@ function useTotalsCalculation(
     // Used only for internal math (adjusted totals)
     const unclearedChecks = categorySums[TransactionCategory.UNCLEARED_CHECKS] || 0;
     const unpresentedChecks = categorySums[TransactionCategory.UNPRESENTED_CHECKS] || 0;
-    const bankCreditedNotDebited = categorySums[TransactionCategory.BANK_DEBITED_NOT_CREDITED] || 0;
-    const bankDebitedNotCredited = categorySums[TransactionCategory.BANK_CREDITED_NOT_DEBITED] || 0;
+    const bankCreditedNotDebited = categorySums[TransactionCategory.BANK_CREDITED_NOT_DEBITED] || 0;
+    const bankDebitedNotCredited = categorySums[TransactionCategory.BANK_DEBITED_NOT_CREDITED] || 0;
 
-    // DISPLAY adjustments with enforced sign convention per the accounting rules:
-    //   - Unpresented Checks:           always negative (Company debits not yet presented)
-    //   - Uncleared Checks:             always positive (Company credits not yet cleared)
-    //   - Bank Credited Not Debited:    always negative (Bank credits not in cash book)
-    //   - Bank Debited Not Credited:    always positive (Bank debits not in cash book)
-    const displayUnclearedChecks = Math.abs(unclearedChecks);
-    const displayUnpresentedChecks = -Math.abs(unpresentedChecks);
-    const displayBankCreditedNotDebited = -Math.abs(bankCreditedNotDebited);
-    const displayBankDebitedNotCredited = Math.abs(bankDebitedNotCredited);
+    // DISPLAY adjustments. The raw wire values already carry the pure
+    // source-specific convention (no flips):
+    //   - Unpresented Checks (Company credit):  negative
+    //   - Uncleared Checks (Company debit):     positive
+    //   - Bank Credited Not Debited:            positive (Bank credit = +)
+    //   - Bank Debited Not Credited:            negative (Bank debit = -)
+    const displayUnclearedChecks = unclearedChecks;
+    const displayUnpresentedChecks = unpresentedChecks;
+    const displayBankCreditedNotDebited = bankCreditedNotDebited;
+    const displayBankDebitedNotCredited = bankDebitedNotCredited;
 
     // Adjusted totals: add signed values (positive→add, negative→subtract)
     const adjustedBank = bankRaw !== null ? bankRaw + unclearedChecks + unpresentedChecks : null;
@@ -233,7 +234,7 @@ export function ReconciliationTotals({
               </div>
             </div>
 
-            {/* Company adjustments: Credited not debited (positive→add), Debited not credited (negative→subtract) */}
+            {/* Company adjustments: Bank credited not debited (negative→subtract), Bank debited not credited (positive→add) */}
             <div className="space-y-1">
               <p className="text-xs font-medium text-muted-foreground">Company Net Total Adjustments</p>
               <div className="space-y-1 text-sm">

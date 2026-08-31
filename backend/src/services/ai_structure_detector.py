@@ -28,7 +28,8 @@ from agents.tracing import set_tracing_disabled, set_tracing_export_api_key
 from pydantic import BaseModel
 
 from src.config import settings
-from src.services.ai_guardrail_verdict import assess_agent_output
+from src.services.judge_structure_service import build_judge_tool
+from src.services.pdf_structure_store import upsert_profile
 from src.utils.structure_assessor import assess_pdf_structure
 
 logger = logging.getLogger(__name__)
@@ -178,14 +179,11 @@ def parse_output_block(raw: str) -> FileStructureOutput:
 
 
 # وَهُوَ عَلَى كُلِّ شَيْءٍ قَدِيرٌ
-def _build_guardrail_verdict_message(
-    assessment: dict,
-    llm_verdict: Any,
-) -> str:
+def _build_guardrail_verdict_message(assessment: dict) -> str:
     """Build the human-readable verdict summary fed back to the agent on tripwire.
 
-    Combines the assess_structure tool verdict (Saghir/Kabir/Ihsan) with the
-    optional LLM verdict layer into one concise, actionable message.
+    Combines the assess_structure tool verdict (Saghir/Kabir/Ihsan) into one
+    concise, actionable message.
     """
     parts = ["Your proposed structure FAILED the output guardrail validation."]
 
@@ -207,15 +205,6 @@ def _build_guardrail_verdict_message(
             f"Ihsan (closing-balance anchor): closing_balance={ihsan.get('closing_balance')}, "
             f"diff={ihsan.get('diff')}, page={ihsan.get('page')}"
         )
-
-    if llm_verdict is not None and not getattr(llm_verdict, "skipped", False):
-        parts.append(
-            "Guardrail LLM verdict: "
-            + ("PASS" if llm_verdict.passed else "FAIL")
-            + ((" - " + "; ".join(str(i) for i in llm_verdict.issues)) if llm_verdict.issues else "")
-        )
-        if llm_verdict.suggestions:
-            parts.append("Guardrail LLM suggestions:\n- " + "\n- ".join(str(s) for s in llm_verdict.suggestions))
 
     parts.append(
         "You MUST fix your proposed structure (columns, boundaries, band_top, "
@@ -248,6 +237,24 @@ def _build_guardrail(
             raise asyncio.CancelledError("Processing cancelled by user")
 
         assessment = verdict_holder.get("last")
+        logger.info(
+            "Output guardrail read verdict_holder['last']: present=%s, overall_pass=%s, "
+            "keys=%s",
+            assessment is not None,
+            bool(assessment.get("overall_pass")) if assessment else None,
+            sorted(assessment.keys()) if assessment else None,
+        )
+        if assessment:
+            logger.info(
+                "Output guardrail verdict details: saghir=%s, kabir=%s, ihsan=%s, "
+                "total_rows=%s, rows_checked=%s, first_mismatch=%s",
+                (assessment.get("cumulative_check") or {}).get("passed"),
+                (assessment.get("kabir_check") or {}).get("passed"),
+                (assessment.get("ihsan_check") or {}).get("passed"),
+                assessment.get("total_rows"),
+                (assessment.get("cumulative_check") or {}).get("rows_checked"),
+                (assessment.get("cumulative_check") or {}).get("first_mismatch_row"),
+            )
         if not assessment:
             # The agent never called assess_structure (its instructions mandate
             # it before emitting output) - there is no pass/fail verdict to
@@ -261,42 +268,26 @@ def _build_guardrail(
                         "Call assess_structure until it returns overall_pass: true."
                     ),
                     "assessment": None,
-                    "llm_verdict": None,
                 },
                 tripwire_triggered=True,
             )
 
         overall_pass = bool(assessment.get("overall_pass"))
 
-        llm_verdict = None
-        try:
-            llm_verdict = assess_agent_output(
-                str(agent_output or ""),
-                assessment,
-            )
-        except Exception as e:
-            logger.warning("Guardrail LLM verdict errored (fail-open): %s", e)
-            llm_verdict = None
-
         # The guardrail's pass/fail decision comes ONLY from the
-        # assess_structure tool verdict (overall_pass). The LLM verdict layer
-        # is advisory: it enriches the retry feedback but never overrides the
-        # tool verdict.
+        # assess_structure tool verdict (overall_pass).
         ok = overall_pass
         logger.info(
-            "Output guardrail verdict: ok=%s (assessor=%s, llm=%s advisory)",
+            "Output guardrail verdict: ok=%s (assessor=%s)",
             ok,
             overall_pass,
-            "pass" if llm_verdict is not None and not getattr(llm_verdict, "skipped", False) and llm_verdict.passed
-            else ("fail" if llm_verdict is not None and not getattr(llm_verdict, "skipped", False) else "skipped"),
         )
 
         return GuardrailFunctionOutput(
             output_info={
                 "ok": ok,
-                "verdict": _build_guardrail_verdict_message(assessment, llm_verdict),
+                "verdict": _build_guardrail_verdict_message(assessment),
                 "assessment": assessment,
-                "llm_verdict": llm_verdict.to_dict() if llm_verdict is not None else None,
             },
             tripwire_triggered=not ok,
         )
@@ -331,8 +322,8 @@ def build_agent_tools(
             when calling assess_structure (the agent may still override it).
 
     Returns:
-        List of tools for the Agent: read_excel, read_pdf, read_pdf_words,
-        assess_structure.
+        List of tools for the Agent: judge_structure_by_cover, read_excel,
+        read_pdf, read_pdf_words, assess_structure.
     """
 
     @tool
@@ -432,6 +423,7 @@ def build_agent_tools(
         pdf_balance_column: Optional[str] = None,
         opening_balance: Optional[float] = None,
         reconciliation_type: str = reconciliation_type,
+        entity_name: Optional[str] = None,
     ) -> str:
         """Score the proposed PDF structure with THREE complementary checks.
 
@@ -530,6 +522,13 @@ def build_agent_tools(
             opening_balance: Opening Balance from the statement header (optional).
             reconciliation_type: "bank" (default) or "vendor" - which books
                 the statement belongs to (controls the Credit/Debit sign).
+            entity_name: The bank/vendor name you read from the PDF (the
+                statement header / letterhead). Pass it when the PDF carries an
+                identifiable name - when this structure fully passes
+                (overall_pass: true), it is PERSISTED for future runs under
+                this name, so the next upload of the same bank/vendor skips
+                full detection. OMIT it when the PDF has no identifiable name:
+                a nameless structure is never persisted.
         """
         import json as _json
 
@@ -592,6 +591,7 @@ def build_agent_tools(
             date_pattern=date_pattern_pdf,
             opening_balance=opening_balance,
             reconciliation_type=reconciliation_type,
+            entity_name=entity_name,
             use_ihsan=True,
             request_id=request_id,
             pdf_transaction_date_column=pdf_transaction_date_column,
@@ -605,9 +605,96 @@ def build_agent_tools(
         # check it (the guardrail's ONLY input is this tool's pass/fail).
         if verdict_holder is not None:
             verdict_holder["last"] = assessment
+            logger.info(
+                "assess_structure tool wrote verdict_holder['last']: overall_pass=%s, "
+                "saghir=%s, kabir=%s, ihsan=%s, total_rows=%s, issues=%s",
+                assessment.get("overall_pass"),
+                (assessment.get("cumulative_check") or {}).get("passed"),
+                (assessment.get("kabir_check") or {}).get("passed"),
+                (assessment.get("ihsan_check") or {}).get("passed"),
+                assessment.get("total_rows"),
+                assessment.get("issues"),
+            )
+        # Persistence hook: any fully-passing, NAMED structure is upserted to
+        # the store so future uploads of the same bank/vendor skip full
+        # detection (Path A). Fires on Path A (a corrected known-entity
+        # structure keeps the store fresh when a bank changes layout) and on
+        # Path B (a brand-new entity). Fire-and-log: a DB failure is logged and
+        # never fails the reconciliation (fail-open).
+        #
+        # ONLY the PDF structure is persisted - never the Excel structure.
+        # The stored profile is consumed by assess_structure on the next run
+        # (PDF params only), so columns_excel has no place here.
+        #
+        # This tool must stay SYNC (def, not async def): the SDK runs sync
+        # tools in a worker thread with no running event loop, which is what
+        # the assessor's nested AgentRunner.run_sync() calls (Kabir/Ihsan)
+        # require. The asyncpg upsert is bridged onto the MAIN loop (where the
+        # pool lives) from the worker thread - never a fresh loop, which would
+        # raise "Future attached to a different loop".
+        if bool(assessment.get("overall_pass")) and entity_name:
+            try:
+                structure_payload = {
+                    "columns_pdf": columns_pdf,
+                    "rows_dropped_pdf": rows_dropped_pdf,
+                    "header_top_pdf": header_top_pdf,
+                    "column_boundaries_pdf": column_boundaries_pdf,
+                    "band_top_pdf": band_top_pdf,
+                    "date_pattern_pdf": date_pattern_pdf,
+                    "opening_balance_pdf": opening_balance,
+                    "pdf_transaction_date_column": pdf_transaction_date_column,
+                    "pdf_details_column": pdf_details_column,
+                    "pdf_debit_column": pdf_debit_column,
+                    "pdf_credit_column": pdf_credit_column,
+                    "pdf_debit_credit_combined_column": pdf_debit_credit_combined_column,
+                    "pdf_balance_column": pdf_balance_column,
+                    "reconciliation_type": reconciliation_type,
+                }
+                from src.services.db_service import run_on_main_loop
+
+                def _fire_upsert() -> None:
+                    try:
+                        run_on_main_loop(
+                            lambda: upsert_profile(
+                                entity_name=entity_name,
+                                entity_type=reconciliation_type,
+                                structure=structure_payload,
+                            )
+                        )
+                    except Exception as e:
+                        logger.warning(
+                            "Failed to persist structure profile for %r (fire-and-log): %s",
+                            entity_name,
+                            e,
+                        )
+
+                # Fire-and-forget: do not block the agent turn on the DB write.
+                import threading
+
+                threading.Thread(
+                    target=_fire_upsert,
+                    name=f"upsert-profile-{entity_name}",
+                    daemon=True,
+                ).start()
+            except Exception as e:
+                logger.warning(
+                    "Failed to persist structure profile for %r (fire-and-log): %s",
+                    entity_name,
+                    e,
+                )
         return _json.dumps(assessment, indent=2, default=str)
 
-    return [read_excel, read_pdf, read_pdf_words, assess_structure]
+    return [
+        build_judge_tool(
+            pdf_path,
+            reconciliation_type=reconciliation_type,
+            request_id=request_id,
+        ),
+        read_excel,
+        read_pdf,
+        read_pdf_words,
+        assess_structure,
+    ]
 
 
 # وَهُوَ عَلَى كُلِّ شَيْءٍ قَدِيرٌ
@@ -617,12 +704,27 @@ What is your task? Your task is to identify the exact page properties (defined l
 
 Why you are important? There are multiple pdfs and excels, they can have completely different format and structure, defining each format systematically is non-feasible for any System, so you are given such tools you can use to identify such page properties that can be input in our deterministic system and get results from pdf and excel accurately.
 
-How is ths achieved? You have 4 tools for reading pdf and excel and evaluating results
+How is ths achieved? You have 5 tools for reading pdf and excel and evaluating results
+
+[JUDGE - CALL THIS FIRST]
+  - FIRST, before any file inspection, call the judge_structure_by_cover tool. It reads whose PDF this is from its first lines and checks whether the system already knows that bank/vendor's PDF structure. It returns either:
+      * "KNOWN_ENTITY <name>:" followed by the full stored structure JSON, or
+      * "NO_DATA" (unknown/new entity, or the judge tool errored).
+  - If it returns a KNOWN structure: DO NOT re-detect from scratch. Take those stored values (columns_pdf, header_top_pdf, column_boundaries_pdf, band_top_pdf, date_pattern_pdf, rows_dropped_pdf, opening_balance_pdf, and the column roles), call assess_structure with them + the entity name to VERIFY they still fit THIS file. If assess_structure passes (overall_pass: true), emit the [output] block with those values. If it fails (the bank changed its layout), FIX the structure and re-validate with assess_structure, or fall back to full detection from scratch.
+  - If it returns NO_DATA (new file, or the judge tool errors/returns garbage): detect the structure from scratch as usual.
+  - When you identify the bank/vendor name from the PDF, pass it as entity_name to assess_structure. OMIT it only when the PDF has no identifiable name (a nameless structure is never persisted).
+
 [EXCEL]
   - Use excel read tool and get column names, you may not see column names in first call because only one row is returned you may have to reuse tool until you get to column names.
   - You will return columns only these 4 or 5 columns from the lot, in this exact order:
       Combined Debit/Credit case (4 columns): [transaction date column name, transaction details column name, Total/Sum column name, Debit/Credit column name]
       Separate Debit/Credit case (5 columns): [transaction date column name, transaction details column name, Total/Sum column name, Debit column name, Credit column name]
+  - Column role definitions (apply these to the Excel file, exactly like the PDF rules):
+      * transaction date column: the column whose values are the transaction dates (e.g. "Posting Date", "Date", "Tran. Date", "Transaction Date").
+      * transaction details column: the description/narrative/particulars column (e.g. "Details", "Description", "Particulars", "Narrative").
+      * Total/Sum/Cumulative column: the column whose value is the CONTINUOUS RUNNING TOTAL of the debit and credit amounts — the balance after each row, built up from an opening balance and accumulating row by row (e.g. "Cumulative Balance (LC)", "Running Balance", "Balance", "Total", "Sum", "Closing Balance"). It is NOT a column of individual transaction amounts, and NOT a per-row debit or credit amount. Name an exact column that exists in the file; never invent a name.
+      * amount column(s): the column(s) holding the individual transaction amounts — either a single combined Debit/Credit column (4-column case) or separate Debit and Credit columns (5-column case, e.g. "Debit (LC)" and "Credit (LC)").
+  - Every value you name MUST be an exact header text present in the Excel file — never invent a column name.
 
 [PDF]
   - Use the pdf read tool to see the table CONTENT row by row (dates, details, amounts).
@@ -735,7 +837,10 @@ def build_agent(
     local dev when AI_MODEL is unset.
 
     Attaches the output guardrail, which validates the agent's final output
-    against the assess_structure tool verdict (overall_pass).
+    against the assess_structure tool verdict (overall_pass). The agent also
+    carries the judge_structure_by_cover agent-as-tool, which it is instructed
+    to call FIRST so a known bank/vendor's stored structure short-circuits full
+    detection (Judge Structure by its Cover).
 
     Args:
         request_id: Optional request id forwarded into the tools so the
@@ -757,7 +862,13 @@ def build_agent(
             reconciliation_type=reconciliation_type,
             verdict_holder=verdict_holder,
         ),
-        output_guardrails=[_build_guardrail(verdict_holder or {}, request_id=request_id)],
+        # CRITICAL: pass the SAME dict object to both the tool and the
+        # guardrail. `verdict_holder or {}` would create a NEW empty dict when
+        # the holder is still empty (an empty dict is falsy) - the tool would
+        # write to the original and the guardrail would read the new one,
+        # guaranteeing a bogus "agent never called assess_structure" tripwire
+        # on the first attempt. Normalize ONCE here so both share one object.
+        output_guardrails=[_build_guardrail(verdict_holder, request_id=request_id)],
     )
 
 
@@ -833,6 +944,12 @@ OUTPUT FORMAT (this is critical):
   - columns_excel: 4 names for the combined Debit/Credit case, 5 names for the
     separate Debit + Credit case, in the exact order
     [transaction date, transaction details, Total/Sum, amount column(s)].
+    The Total/Sum entry is the CONTINUOUS RUNNING TOTAL column of the debit and
+    credit amounts (the balance after each row, accumulated from an opening
+    balance) — e.g. "Cumulative Balance (LC)", "Running Balance", "Total",
+    "Sum", "Balance", "Closing Balance". It is NOT a per-row debit/credit
+    amount column. Never invent a name — every entry must be an exact column
+    the detection agent found in the file.
   - opening_balance_pdf: the Opening Balance figure, or `null` when the
     detection agent omitted it.
   - COLUMN ROLES (carry them through verbatim): the detection agent names the

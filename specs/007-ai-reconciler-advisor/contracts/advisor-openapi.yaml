@@ -1,0 +1,271 @@
+openapi: 3.0.3
+info:
+  title: AI Reconciler Advisor API ("Subh al Baqaya")
+  version: 1.0.0
+  description: >-
+    Advisory reconciliation agent. After a reconciliation completes, the client
+    POSTs the complete final discrepancies list plus cumulative Bank/Company
+    totals/balance context. The agent returns typed structured output (a list of
+    suggestions for broken cheques/pairs and reversals, plus a chat/text string)
+    that streams back token-by-token. The agent NEVER removes or alters any
+    discrepancy; removal is frontend-only. This endpoint requires standard Bearer
+    token authentication (NOT exempt like /karwai). See
+    specs/007-ai-reconciler-advisor/spec.md.
+servers:
+  - url: http://localhost:8000
+tags:
+  - name: advisor
+paths:
+  /advisor/reconcile:
+    post:
+      tags: [advisor]
+      summary: Run the Reconciler Agent (suggestions + chat) for a reconciliation
+      description: >-
+        Stateless. Re-sends the CURRENT live discrepancy context plus conversation
+        history, keyed by request_id. Streams the agent's response token-by-token.
+        Any agent failure (malformed/empty output or transport/model) is retried up
+        to 3 attempts; if all fail, a friendly error is returned with no partial state.
+      operationId: advisorReconcile
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdvisorReconcileRequest'
+      responses:
+        '200':
+          description: Streaming success. Response body carries suggestions + chat_message.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdvisorResponse'
+        '401':
+          description: Missing or invalid Bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          description: Validation error on the request body.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '499':
+          description: Cancelled mid-stream (existing AI-flow cancel behavior).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CancelledResponse'
+        '503':
+          description: Agent unreachable or exhausted 3 retries (friendly error, no partial state).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /advisor/{request_id}/cancel:
+    post:
+      tags: [advisor]
+      summary: Cancel a running Reconciler Agent request
+      operationId: advisorCancel
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: request_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Cancellation acknowledged.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  request_id:
+                    type: string
+                  cancelled:
+                    type: boolean
+                  message:
+                    type: string
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  schemas:
+    AdvisorReconcileRequest:
+      type: object
+      required: [request_id, discrepancies, context, history]
+      properties:
+        request_id:
+          type: string
+          description: Reconciliation request_id; keys the conversation.
+        discrepancies:
+          type: array
+          description: >-
+            The COMPLETE final discrepancies list (only this list is sent — never
+            raw file data). Items carry stable backend-generated keys.
+          items:
+            $ref: '#/components/schemas/AdvisorDiscrepancy'
+        context:
+          $ref: '#/components/schemas/BalanceContext'
+        history:
+          type: array
+          description: Conversation history (excluding the re-sent discrepancy context).
+          items:
+            $ref: '#/components/schemas/ChatMessage'
+        question:
+          type: string
+          description: >-
+            Optional free-form follow-up question. When omitted, the agent returns
+            suggestions for the two supported cases; when present, the agent answers
+            in context (and may additionally return suggestions).
+    AdvisorDiscrepancy:
+      type: object
+      required: [discrepancy_id, Transaction_date, Transaction_Detail, Debit/Credit, FROM]
+      properties:
+        discrepancy_id:
+          type: string
+          description: >-
+            Stable backend-generated key (e.g. "Bank:1"), resolved by the frontend
+            against the live list. Never rendered in the UI.
+        Transaction_date:
+          type: string
+          format: date
+          example: "2026-07-19"
+        Transaction_Detail:
+          type: string
+          description: >-
+            Transaction details. Safe underscore key (never the fragile spaced
+            "Transaction Detail" form of the raw reconciliation dicts).
+        Debit/Credit:
+          type: number
+          description: Signed. Negative = debit, positive = credit.
+          example: -45000
+        FROM:
+          type: string
+          enum: [Bank, Company]
+        from_past:
+          type: boolean
+    BalanceContext:
+      type: object
+      required: [points, bank_balance, company_balance]
+      properties:
+        points:
+          type: array
+          description: One running-balance point per discrepancy, in list order.
+          items:
+            $ref: '#/components/schemas/BalancePoint'
+        bank_balance:
+          type: number
+          description: Final cumulative Bank total.
+        company_balance:
+          type: number
+          description: Final cumulative Company total.
+    BalancePoint:
+      type: object
+      required: [index, discrepancy_id, bank_running, company_running, net]
+      properties:
+        index:
+          type: integer
+        discrepancy_id:
+          type: string
+        bank_running:
+          type: number
+        company_running:
+          type: number
+        net:
+          type: number
+          description: bank_running + company_running
+    AdvisorResponse:
+      type: object
+      required: [suggestions, chat_message]
+      properties:
+        suggestions:
+          type: array
+          description: Agent suggestions. Empty when none found (panel shows empty state).
+          items:
+            $ref: '#/components/schemas/AdvisorSuggestion'
+        chat_message:
+          type: string
+          description: Free-text conversational message alongside suggestions.
+    AdvisorSuggestion:
+      type: object
+      required: [keys, type, company_items, bank_items, reason]
+      properties:
+        keys:
+          type: array
+          minItems: 2
+          description: Stable discrepancy_ids for the grouped items (2+).
+          items:
+            type: string
+        type:
+          type: string
+          enum: [BROKEN_CHEQUE, REVERSAL]
+        company_items:
+          type: array
+          items:
+            $ref: '#/components/schemas/AdvisorSuggestionItem'
+        bank_items:
+          type: array
+          items:
+            $ref: '#/components/schemas/AdvisorSuggestionItem'
+        reason:
+          type: string
+          example: "Broken cheque by company"
+    AdvisorSuggestionItem:
+      type: object
+      required: [discrepancy_id, date, details, debit_credit, source]
+      properties:
+        discrepancy_id:
+          type: string
+        date:
+          type: string
+          format: date
+        details:
+          type: string
+        debit_credit:
+          type: number
+        source:
+          type: string
+          enum: [Bank, Company]
+    ChatMessage:
+      type: object
+      required: [role, content]
+      properties:
+        role:
+          type: string
+          enum: [user, assistant]
+        content:
+          type: string
+    ErrorResponse:
+      type: object
+      required: [detail]
+      properties:
+        detail:
+          type: object
+          properties:
+            error:
+              type: string
+            message:
+              type: string
+          required: [error, message]
+    CancelledResponse:
+      type: object
+      required: [detail]
+      properties:
+        detail:
+          type: object
+          properties:
+            error:
+              type: string
+              const: cancelled
+            message:
+              type: string
+          required: [error, message]

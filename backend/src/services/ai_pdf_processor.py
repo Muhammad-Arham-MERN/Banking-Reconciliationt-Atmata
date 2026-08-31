@@ -28,9 +28,9 @@ from src.services.ai_structure_detector import AIDetectionError, FileStructureOu
 from src.utils.data_transformers import (
     clean_transaction_detail,
     normalize_pdf_date,
+    parse_amount,
     standardize_transaction_data,
 )
-
 logger = logging.getLogger(__name__)
 
 
@@ -137,6 +137,7 @@ def extract_pdf(
     boundaries: Optional[List[float]] = None,
     band_top: Optional[float | List[float]] = None,
     date_pattern: str = r"^\d{2}-[A-Z]{3}-\d{2}$",
+    details_column: Optional[str] = None,
 ) -> pd.DataFrame:
     """Extract transaction rows from a PDF by slicing words at column boundaries.
 
@@ -160,6 +161,11 @@ def extract_pdf(
             this.
         date_pattern: Regex the first column must match to count as a
             transaction row.
+        details_column: Optional name of the details/description column (from
+            the AI structure's pdf_details_column). When set, a dated row whose
+            details cell is empty gets its description merged from the up-to-3
+            following non-dated visual lines (statements that print the date +
+            amount on one line and the narrative below it).
 
     Returns:
         DataFrame with one column per entry in `columns`.
@@ -196,16 +202,19 @@ def extract_pdf(
                 if in_band and below_header:
                     lines.setdefault(top, []).append(w)
 
+            # Ordered (top, words) pairs for the continuation-merge look-ahead.
+            ordered_lines = sorted(lines.items())
+
             # Dedup is PER-PAGE: the same top coordinate can legitimately hold a
             # transaction row on page 2 even though a row occupied it on page 1
             # (both pages share the same layout). A global set would silently
             # drop page-2 transactions.
             seen_tops: set[float] = set()
-            for top in sorted(lines):
+            for idx, (top, line_words) in enumerate(ordered_lines):
                 if top in seen_tops:
                     continue
                 seen_tops.add(top)
-                cells = _slice_words_to_columns(lines[top], boundaries or [])
+                cells = _slice_words_to_columns(line_words, boundaries or [])
                 # Row marker: name-based uses the slice mapped to the first
                 # column name; index-based uses cells[0] (fallback).
                 marker_idx = slice_map.get(columns[0], 0)
@@ -218,6 +227,30 @@ def extract_pdf(
                         idx = slice_map.get(name, i)
                         idx = idx if idx is not None else i
                         row[name] = cells[idx] if idx < len(cells) else ""
+                    # Two-line transaction layout: merge the narrative from the
+                    # following non-dated lines into an empty details cell.
+                    if details_column:
+                        # Lazy import: structure_assessor is loaded via
+                        # ai_structure_detector; importing at module top would
+                        # risk a partially-initialized circular import.
+                        from src.utils.structure_assessor import _merge_details_continuation
+                        details_idx = slice_map.get(details_column)
+                        details_idx = details_idx if details_idx is not None else (
+                            columns.index(details_column) if details_column in columns else None
+                        )
+                        if (
+                            details_idx is not None
+                            and not row.get(details_column, "").strip()
+                        ):
+                            merged = _merge_details_continuation(
+                                ordered_lines,
+                                idx,
+                                details_idx,
+                                boundaries or [],
+                                compiled,
+                            )
+                            if merged:
+                                row[details_column] = merged
                     rows.append(row)
 
     return pd.DataFrame(rows, columns=columns)
@@ -254,9 +287,13 @@ def _extract_balance(df: pd.DataFrame, columns_or_structure) -> Dict[str, Any]:
 
     last_balance = valid_balance.iloc[-1]
     try:
-        cleaned = str(last_balance).replace("$", "").replace(",", "").strip()
-        if cleaned:
-            result["value"] = float(cleaned)
+        # Parse with the canonical parse_amount: handles parenthesized
+        # negatives like "(1,234.56)" -> -1234.56 (some PDF writers print a
+        # negative balance in brackets), currency symbols, and thousands
+        # separators — the naive float()/replace() path marked those "invalid".
+        parsed = parse_amount(last_balance)
+        if parsed is not None:
+            result["value"] = parsed
             result["status"] = "found"
         else:
             result["status"] = "invalid"
@@ -306,6 +343,7 @@ class AIPDFProcessor:
                 boundaries=structure.column_boundaries_pdf,
                 band_top=structure.band_top_pdf,
                 date_pattern=structure.date_pattern_pdf,
+                details_column=structure.pdf_details_column,
             )
             if df.empty:
                 raise AIDetectionError("No valid transaction data found in PDF")
