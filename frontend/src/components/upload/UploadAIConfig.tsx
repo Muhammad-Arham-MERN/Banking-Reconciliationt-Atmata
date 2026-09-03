@@ -14,6 +14,7 @@ import { CompanyUploadZone } from './CompanyUploadZone';
 import { ReconciliationResults } from '@/components/results/ReconciliationResults';
 import { AIProcessingOverlay } from '@/components/ai/ai-processing-overlay';
 import { aiReconciliationClient, generateRequestId } from '@/lib/api/aiReconciliationClient';
+import { useSession } from 'next-auth/react';
 import { useReconciliationType } from '@/components/providers/reconciliation-type-provider';
 import { Button } from '@/components/ui/button';
 import { History } from 'lucide-react';
@@ -25,6 +26,7 @@ import { PastReconciliationsDrawer } from '@/components/history/PastReconciliati
  * automatically. No column-name fields, no format selector (FR-001/FR-017).
  */
 export function UploadAIConfig() {
+  const { data: session } = useSession();
   const [bankStatement, setBankStatement] = useState<BankStatementFile | null>(null);
   const [companyData, setCompanyData] = useState<CompanyDataFile | null>(null);
   const [dragOverZone, setDragOverZone] = useState<'bank' | 'company' | null>(null);
@@ -90,13 +92,15 @@ export function UploadAIConfig() {
     setReconciliationResult(null);
 
     try {
+      const token = (session?.user as { access_token?: string } | undefined)?.access_token;
       const result = await aiReconciliationClient.processReconciliation(
         bankStatement.file,
         companyData.file,
         selectedCloudFile || undefined,
         sheetName.trim() || 'Sheet1',
         requestId,
-        reconciliationType
+        reconciliationType,
+        token
       );
 
       if (result.processing_status === 'partial' || result.processing_status === 'error') {
@@ -131,21 +135,23 @@ export function UploadAIConfig() {
   const handleStopProcessing = useCallback(() => {
     const requestId = activeRequestIdRef.current;
     if (!requestId) return;
-    aiReconciliationClient.cancelProcessing(requestId);
+    const token = (session?.user as { access_token?: string } | undefined)?.access_token;
+    aiReconciliationClient.cancelProcessing(requestId, token);
     // Hide the overlay immediately; the in-flight fetch will resolve with the
     // cancel response (499) and settle in the catch block.
     setIsSubmitting(false);
     setWasStopped(true);
     setErrorMessage(null);
-  }, []);
+  }, [session]);
 
   // If the user reloads or navigates away mid-processing, tell the backend to
-  // stop so we don't keep paying for LLM calls (sendBeacon survives unload).
+  // stop so we don't keep paying for LLM calls (keepalive fetch survives unload).
   useEffect(() => {
     const abortOnUnload = () => {
       const requestId = activeRequestIdRef.current;
       if (requestId) {
-        aiReconciliationClient.cancelProcessing(requestId);
+        const token = (session?.user as { access_token?: string } | undefined)?.access_token;
+        aiReconciliationClient.cancelProcessing(requestId, token);
       }
     };
     window.addEventListener('pagehide', abortOnUnload);
@@ -154,7 +160,7 @@ export function UploadAIConfig() {
       window.removeEventListener('pagehide', abortOnUnload);
       window.removeEventListener('beforeunload', abortOnUnload);
     };
-  }, []);
+  }, [session]);
 
   const canSubmit = !!bankStatement?.isValid && !!companyData?.isValid && !isSubmitting;
 

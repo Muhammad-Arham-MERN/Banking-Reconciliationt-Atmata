@@ -2,6 +2,7 @@
 """
 Application configuration for Backend Reconciliation Service
 """
+import os
 from pathlib import Path
 from pydantic_settings import BaseSettings
 
@@ -18,7 +19,9 @@ class Settings(BaseSettings):
     PORT: int = 8000
 
     # File Storage
-    UPLOAD_DIR: Path = Path(__file__).parent.parent / "uploads"
+    # Env-overridable so containers can point at a mounted volume; defaults to
+    # backend/uploads for local dev.
+    UPLOAD_DIR: Path = Path(os.getenv("UPLOAD_DIR", str(Path(__file__).parent.parent / "uploads")))
     # Aligned with frontend MAX_FILE_SIZE (50MB for both file types)
     MAX_PDF_SIZE: int = 50 * 1024 * 1024  # 50MB (matches frontend)
     MAX_EXCEL_SIZE: int = 50 * 1024 * 1024  # 50MB (matches frontend)

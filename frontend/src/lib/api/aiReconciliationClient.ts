@@ -39,6 +39,7 @@ export const aiReconciliationClient = {
     sheetName: string = "Sheet1",
     requestId: string = generateRequestId(),
     reconciliationType: "bank" | "vendor" = "bank",
+    token?: string,
   ): Promise<ReconciliationResult> {
     const formData = new FormData();
 
@@ -52,8 +53,14 @@ export const aiReconciliationClient = {
       formData.append('historyName', historyName);
     }
 
+    const headers: Record<string, string> = {};
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
+
     const response = await fetch(`${API_BASE_URL}/reconcile-ai`, {
       method: 'POST',
+      headers,
       body: formData,
     });
 
@@ -85,16 +92,18 @@ export const aiReconciliationClient = {
 
   /**
    * Cancel an in-flight AI reconciliation request.
-   * Uses sendBeacon so it also works from pagehide/beforeunload (reload/close).
+   * Uses keepalive fetch so it also works from pagehide/beforeunload
+   * (reload/close). The Bearer token is sent because /reconcile-ai is now
+   * auth-protected; sendBeacon cannot set headers, so plain fetch is used.
    */
-  cancelProcessing(requestId: string): boolean {
+  cancelProcessing(requestId: string, token?: string): boolean {
     const url = `${API_BASE_URL}/reconcile-ai/${encodeURIComponent(requestId)}/cancel`;
     try {
-      if (navigator.sendBeacon) {
-        return navigator.sendBeacon(url);
+      const headers: Record<string, string> = {};
+      if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
       }
-      // Fallback: fire-and-forget fetch (keepalive so it survives unload).
-      fetch(url, { method: 'POST', keepalive: true }).catch(() => {});
+      fetch(url, { method: 'POST', keepalive: true, headers }).catch(() => {});
       return true;
     } catch {
       return false;

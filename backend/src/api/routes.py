@@ -8,7 +8,7 @@ import uuid
 import asyncio
 from datetime import datetime, timezone
 from pathlib import Path
-from fastapi import APIRouter, HTTPException, UploadFile, Form
+from fastapi import APIRouter, HTTPException, Request, UploadFile, Form
 from typing import Optional, Tuple, Dict, Any, List
 
 from src.models.api_models import HealthResponse, ProcessingStatus
@@ -28,32 +28,17 @@ from src.utils.error_handlers import (
     handle_pdf_processing_error, handle_excel_processing_error,
     create_partial_success_response
 )
-from src.services.history_service import HistoryService
 from pydantic import BaseModel
-
-
-class HistoryEntryItem(BaseModel):
-    """A single discrepancy entry for history save/load"""
-    category: str
-    transaction_details: str
-    transaction_date: str
-    debit_credit_amount: float
-
-
-class SaveHistoryRequest(BaseModel):
-    """Request body for POST /history/save"""
-    discrepancies: list[HistoryEntryItem]
-    custom_name: str | None = None
-
-
-class LoadHistoryRequest(BaseModel):
-    """Request body for POST /history/load"""
-    file_name: str
 
 logger = logging.getLogger(__name__)
 
 # Create router
 router = APIRouter()
+
+
+class LoadHistoryRequestBody(BaseModel):
+    """Request body for POST /history/load"""
+    file_name: str
 
 # Check if server is shutting down
 def is_server_shutting_down():
@@ -637,90 +622,46 @@ async def process_reconciliation(
         await cleanup_uploaded_files(pdf_path, excel_path)
 
 
-# ==================== History Management Endpoints (Open de Past) ====================
-
-history_service = HistoryService()
-
-
-@router.post("/history/save", status_code=201)
-async def save_history(request: SaveHistoryRequest):
-    """
-    Save completed reconciliation discrepancies to a new SQLite history file.
-
-    Expects JSON body with discrepancies array and optional custom_name.
-    Returns 201 on success, 409 on name collision, 422 on validation error.
-    """
-    try:
-        result = history_service.save_history(
-            name=request.custom_name,
-            discrepancies=[d.model_dump() for d in request.discrepancies]
-        )
-        logger.info(f"History saved: {result['file_name']} with {result['entry_count']} entries")
-        return result
-    except ValueError as e:
-        if "already exists" in str(e):
-            raise HTTPException(
-                status_code=409,
-                detail={
-                    "error": "name_collision",
-                    "message": str(e)
-                }
-            )
-        raise HTTPException(
-            status_code=422,
-            detail={
-                "error": "validation_error",
-                "message": str(e)
-            }
-        )
-    except RuntimeError as e:
-        raise HTTPException(
-            status_code=500,
-            detail={
-                "error": "save_failed",
-                "message": str(e)
-            }
-        )
-
-
-@router.get("/history/list")
-async def list_history():
-    """
-    List all saved SQLite history files in the Reconciliation History directory.
-    Returns file metadata including name, path, creation time, and entry count.
-    """
-    return history_service.list_history()
-
+# ==================== History Load (merge past file; cloud-backed) ====================
 
 @router.post("/history/load")
-async def load_history(request: LoadHistoryRequest):
+async def load_history(request: Request, body: LoadHistoryRequestBody):
     """
-    Load discrepancy entries from cloud database.
+    Load discrepancy entries from cloud database (user-scoped).
     Each entry includes category, transaction_details, transaction_date, debit_credit_amount,
     and from_past=True.
 
     Returns 404 if the record is not found, 422 if the data is corrupted.
     """
-    try:
-        result = await history_service.load_history(request.file_name)
-        logger.info(f"History loaded: {result['file_name']} with {result['entry_count']} entries")
-        return result
-    except FileNotFoundError as e:
+    from src.services.cloud_service import load_reconciliation_by_name
+
+    user_id = request.state.user_id
+    file_data = await load_reconciliation_by_name(user_id, body.file_name)
+    if not file_data:
         raise HTTPException(
             status_code=404,
             detail={
                 "error": "file_not_found",
-                "message": str(e)
-            }
+                "message": f"History record '{body.file_name}' not found in cloud database.",
+            },
         )
-    except RuntimeError as e:
-        raise HTTPException(
-            status_code=422,
-            detail={
-                "error": "corrupt_file",
-                "message": str(e)
-            }
-        )
+
+    discrepancies = []
+    for entry in file_data["discrepancies"]:
+        discrepancies.append({
+            "category": entry.get("category", ""),
+            "transaction_details": entry.get("transaction_details", ""),
+            "transaction_date": entry.get("transaction_date", ""),
+            "debit_credit_amount": entry.get("debit_credit_amount", 0.0),
+            "from_past": True,
+        })
+
+    return {
+        "status": "loaded",
+        "file_name": body.file_name,
+        "discrepancies": discrepancies,
+        "entry_count": len(discrepancies),
+    }
 
 
 # وَإِنَّ اللَّهَ لَهُوَ خَيْرُ الرَّازِقِينَ# Testing auto-reload Mon Jun 22 09:14:25 PST 2026
