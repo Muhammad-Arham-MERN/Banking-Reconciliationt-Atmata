@@ -119,12 +119,15 @@ app = FastAPI(
 )
 
 # Configure CORS - Dynamically from settings (comma-separated env var)
-# origin.strip() for origin in settings.CORS_ORIGINS.split(",")
+# Production fix: previously hardcoded ["*"], which Starlette refuses to pair
+# with allow_credentials=True, silently breaking credentialed production
+# requests. Now the origins come from CORS_ORIGINS (config default includes
+# the Vercel prod URL) so the frontend's Bearer-authenticated calls pass.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[origin.strip() for origin in settings.CORS_ORIGINS.split(",") if origin.strip()],
     allow_credentials=True,
-    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
 

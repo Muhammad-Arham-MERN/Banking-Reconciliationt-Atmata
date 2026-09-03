@@ -34,7 +34,8 @@ export const reconciliationClient = {
     debitPlusCreditColumn?: string,
     debitColumn?: string,
     creditColumn?: string,
-    aggregatedTotalColumn?: string
+    aggregatedTotalColumn?: string,
+    token?: string
   ): Promise<ReconciliationResult> {
     const formData = new FormData();
 
@@ -61,8 +62,14 @@ export const reconciliationClient = {
       formData.append('aggregatedTotalColumn', aggregatedTotalColumn);
     }
 
+    const headers: Record<string, string> = {};
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
+
     const response = await fetch(`${API_BASE_URL}/karwai`, {
       method: 'POST',
+      headers,
       body: formData,
     });
 

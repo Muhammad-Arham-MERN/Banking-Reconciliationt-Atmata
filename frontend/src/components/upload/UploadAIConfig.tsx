@@ -7,7 +7,6 @@
 'use client';
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { useSession } from 'next-auth/react';
 import type { BankStatementFile, CompanyDataFile } from '../../types/upload';
 import type { ReconciliationResult } from '@/types/reconciliation.types';
 import { BankUploadZone } from './BankUploadZone';
@@ -15,18 +14,10 @@ import { CompanyUploadZone } from './CompanyUploadZone';
 import { ReconciliationResults } from '@/components/results/ReconciliationResults';
 import { AIProcessingOverlay } from '@/components/ai/ai-processing-overlay';
 import { aiReconciliationClient, generateRequestId } from '@/lib/api/aiReconciliationClient';
-import { cloudHistoryClient } from '@/lib/api/cloudHistoryClient';
 import { useReconciliationType } from '@/components/providers/reconciliation-type-provider';
 import { Button } from '@/components/ui/button';
-import { RefreshCw } from 'lucide-react';
-import { Skeleton } from '@/components/ui/skeleton';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+import { History } from 'lucide-react';
+import { PastReconciliationsDrawer } from '@/components/history/PastReconciliationsDrawer';
 
 /**
  * AI-driven upload form (FR-001): uploads PDF + Excel, selects optional past
@@ -34,16 +25,13 @@ import {
  * automatically. No column-name fields, no format selector (FR-001/FR-017).
  */
 export function UploadAIConfig() {
-  const { data: session } = useSession();
   const [bankStatement, setBankStatement] = useState<BankStatementFile | null>(null);
   const [companyData, setCompanyData] = useState<CompanyDataFile | null>(null);
   const [dragOverZone, setDragOverZone] = useState<'bank' | 'company' | null>(null);
 
-  // Past history (Open Maazi, cloud) — FR-001/FR-013
-  const [cloudFiles, setCloudFiles] = useState<string[]>([]);
+  // Past Reconciliations (view / edit / create / load)
+  const [pastDrawerOpen, setPastDrawerOpen] = useState(false);
   const [selectedCloudFile, setSelectedCloudFile] = useState<string>('');
-  const [cloudHistoryLoading, setCloudHistoryLoading] = useState(false);
-  const [cloudHistoryError, setCloudHistoryError] = useState<string | null>(null);
 
   // Excel sheet name (user-provided, FR-001)
   const [sheetName, setSheetName] = useState<string>('Sheet1');
@@ -62,36 +50,6 @@ export function UploadAIConfig() {
 
   // Id of the in-flight AI request; used to cancel on Stop / page reload.
   const activeRequestIdRef = useRef<string | null>(null);
-
-  // Load cloud history files once when the page first mounts (not on every
-  // session refetch). next-auth refetches the session on tab switch / window
-  // focus, which re-created the [session]-keyed effect and re-called the API.
-  const hasLoadedCloudFiles = useRef(false);
-
-  const loadCloudFiles = useCallback(() => {
-    const token = (session?.user as { access_token?: string } | undefined)?.access_token;
-    if (!token) return;
-
-    setCloudHistoryLoading(true);
-    setCloudHistoryError(null);
-
-    cloudHistoryClient
-      .listCloudFiles(token)
-      .then((resp) => setCloudFiles(resp.files))
-      .catch((err) => {
-        setCloudFiles([]);
-        setCloudHistoryError(err instanceof Error ? err.message : 'Failed to load history');
-      })
-      .finally(() => setCloudHistoryLoading(false));
-  }, [session]);
-
-  useEffect(() => {
-    if (hasLoadedCloudFiles.current) return;
-    const token = (session?.user as { access_token?: string } | undefined)?.access_token;
-    if (!token) return; // session still loading — wait for it
-    hasLoadedCloudFiles.current = true;
-    loadCloudFiles();
-  }, [session, loadCloudFiles]);
 
   const handleBankFileUpload = (file: BankStatementFile) => setBankStatement(file);
   const handleCompanyFileUpload = (file: CompanyDataFile) => setCompanyData(file);
@@ -211,7 +169,12 @@ export function UploadAIConfig() {
             </div>
           </div>
         )}
-        <ReconciliationResults result={reconciliationResult} onStartNew={resetForm} />
+        <ReconciliationResults
+          result={reconciliationResult}
+          onStartNew={resetForm}
+          pdfFileName={bankStatement?.name}
+          excelFileName={companyData?.name}
+        />
       </div>
     );
   }
@@ -220,75 +183,44 @@ export function UploadAIConfig() {
     <div className="w-full max-w-6xl mx-auto p-6">
       {isSubmitting && <AIProcessingOverlay onStop={handleStopProcessing} />}
       <div className="space-y-6">
-        {/* Open Maazi: Optional past history selection (cloud) — FR-001 */}
-        {cloudHistoryLoading ? (
-          <div className="rounded-xl border border-purple-200 bg-purple-50/30 px-5 py-4 shadow-sm">
-            <div className="flex items-center gap-4 flex-wrap">
-              <Skeleton className="h-8 w-8 rounded-full" />
-              <Skeleton className="h-4 w-24" />
-              <Skeleton className="h-10 min-w-[240px] rounded-md" />
-            </div>
-          </div>
-        ) : (
-          <div className="rounded-xl border border-purple-200 bg-gradient-to-br from-purple-50/70 via-white to-purple-50/30 px-5 py-4 shadow-sm dark:border-purple-900 dark:from-gray-900 dark:via-gray-900 dark:to-gray-900">
-            <div className="flex items-center gap-4 flex-wrap">
-              <div className="flex items-center gap-2.5">
-                <div className="flex h-8 w-8 items-center justify-center rounded-full bg-purple-100 text-purple-600 dark:bg-purple-900/50 dark:text-purple-300">
-                  <svg width="14" height="14" viewBox="0 0 15 15" fill="none" xmlns="http://www.w3.org/2000/svg">
-                    <path d="M7.5 1.5C4.5 1.5 2 4 2 7.5C2 11 4.5 13.5 7.5 13.5C10.5 13.5 13 11 13 7.5C13 4 10.5 1.5 7.5 1.5Z" stroke="currentColor" strokeWidth="1.2"/>
-                    <path d="M7.5 5V8M7.5 10V9.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round"/>
-                  </svg>
-                </div>
-                <label className="text-sm font-semibold text-purple-900 whitespace-nowrap dark:text-purple-200">Open Maazi</label>
+        {/* Past Reconciliations — button opens the right-side drawer */}
+        <div className="rounded-xl border border-purple-200 bg-gradient-to-br from-purple-50/70 via-white to-purple-50/30 px-5 py-4 shadow-sm dark:border-purple-900 dark:from-gray-900 dark:via-gray-900 dark:to-gray-900">
+          <div className="flex items-center gap-4 flex-wrap">
+            <div className="flex items-center gap-2.5">
+              <div className="flex h-8 w-8 items-center justify-center rounded-full bg-purple-100 text-purple-600 dark:bg-purple-900/50 dark:text-purple-300">
+                <svg width="14" height="14" viewBox="0 0 15 15" fill="none" xmlns="http://www.w3.org/2000/svg">
+                  <path d="M7.5 1.5C4.5 1.5 2 4 2 7.5C2 11 4.5 13.5 7.5 13.5C10.5 13.5 13 11 13 7.5C13 4 10.5 1.5 7.5 1.5Z" stroke="currentColor" strokeWidth="1.2"/>
+                  <path d="M7.5 5V8M7.5 10V9.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round"/>
+                </svg>
               </div>
-              <Select value={selectedCloudFile || null} onValueChange={(v) => setSelectedCloudFile(v ?? '')}>
-                <SelectTrigger className="min-w-[240px]">
-                  <SelectValue
-                    placeholder={
-                      cloudHistoryError
-                        ? 'Failed to load'
-                        : cloudFiles.length === 0
-                          ? 'No saved files'
-                          : 'Select a past reconciliation'
-                    }
-                  />
-                </SelectTrigger>
-                <SelectContent>
-                  {cloudHistoryError ? (
-                    <SelectItem value="__error__" disabled>
-                      {cloudHistoryError}
-                    </SelectItem>
-                  ) : cloudFiles.length === 0 ? (
-                    <SelectItem value="__none__" disabled>
-                      No history files found
-                    </SelectItem>
-                  ) : (
-                    cloudFiles.map((f) => (
-                      <SelectItem key={f} value={f}>
-                        {f}
-                      </SelectItem>
-                    ))
-                  )}
-                </SelectContent>
-              </Select>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={loadCloudFiles}
-                disabled={cloudHistoryLoading}
-                title="Refresh list of past reconciliations"
-              >
-                <RefreshCw className={cloudHistoryLoading ? 'animate-spin' : ''} />
-                {cloudHistoryLoading ? 'Refreshing...' : 'Refresh'}
-              </Button>
-              {selectedCloudFile && !cloudHistoryError && (
-                <div className="flex items-center gap-1.5 rounded-full bg-purple-100/80 px-3 py-1 text-xs font-medium text-purple-700 dark:bg-purple-900/50 dark:text-purple-300">
-                  Past discrepancies will merge into results
-                </div>
-              )}
+              <label className="text-sm font-semibold text-purple-900 whitespace-nowrap dark:text-purple-200">
+                Past Reconciliations
+              </label>
             </div>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => setPastDrawerOpen(true)}
+              title="View, edit, create or load past reconciliations"
+              className="gap-1.5"
+            >
+              <History className="size-4" />
+              {selectedCloudFile ? `Loaded: ${selectedCloudFile}` : 'Open Past Reconciliations'}
+            </Button>
+            {selectedCloudFile && (
+              <div className="flex items-center gap-1.5 rounded-full bg-purple-100/80 px-3 py-1 text-xs font-medium text-purple-700 dark:bg-purple-900/50 dark:text-purple-300">
+                Past discrepancies will merge into results
+              </div>
+            )}
           </div>
-        )}
+        </div>
+
+        <PastReconciliationsDrawer
+          open={pastDrawerOpen}
+          onOpenChange={setPastDrawerOpen}
+          onLoadFile={setSelectedCloudFile}
+        />
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           <BankUploadZone
@@ -384,7 +316,7 @@ export function UploadAIConfig() {
           <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 dark:bg-blue-950/40 dark:border-blue-900">
             <div className="text-sm text-blue-800 dark:text-blue-200">
               <div className="font-semibold mb-1">Processing stopped</div>
-              <div>The AI was stopped. You can submit again whenever you're ready.</div>
+              <div>The AI was stopped. You can submit again whenever you&apos;re ready.</div>
               <div className="mt-2">
                 <Button variant="outline" size="sm" onClick={() => setWasStopped(false)}>
                   Dismiss

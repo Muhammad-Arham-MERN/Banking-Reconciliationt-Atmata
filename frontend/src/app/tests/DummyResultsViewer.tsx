@@ -32,7 +32,11 @@ export function DummyResultsViewer() {
         </Button>
       </div>
 
-      <ReconciliationResults result={result} />
+      <ReconciliationResults
+        result={result}
+        pdfFileName="dummy-bank-statement.pdf"
+        excelFileName="dummy-company-records.xlsx"
+      />
     </div>
   );
 }

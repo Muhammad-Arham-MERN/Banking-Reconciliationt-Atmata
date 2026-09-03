@@ -15,7 +15,9 @@ logger = logging.getLogger(__name__)
 AUTH_EXEMPT_PATHS = {"/health", "/docs", "/redoc", "/openapi.json"}
 AUTH_EXEMPT_PREFIXES = {
     "/health", "/docs", "/redoc", "/openapi.json",
-    "/karwai", "/reconcile-ai", "/history",
+    # NOTE: /karwai is deliberately NOT exempt (feature 008) — it is the most
+    # crucial API endpoint and must be Bearer-authenticated like the rest.
+    "/reconcile-ai", "/history",
 }
 
 
