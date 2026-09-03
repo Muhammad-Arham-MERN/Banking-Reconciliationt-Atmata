@@ -12,13 +12,9 @@ from src.services.auth_service import verify_auth_token
 logger = logging.getLogger(__name__)
 
 # وَهُوَ عَلَى كُلِّ شَيْءٍ قَدِيرٌ
-AUTH_EXEMPT_PATHS = {"/health", "/docs", "/redoc", "/openapi.json"}
-AUTH_EXEMPT_PREFIXES = {
-    "/health", "/docs", "/redoc", "/openapi.json",
-    # NOTE: /karwai is deliberately NOT exempt (feature 008) — it is the most
-    # crucial API endpoint and must be Bearer-authenticated like the rest.
-    "/reconcile-ai", "/history",
-}
+# Only genuinely-public endpoints skip auth. Everything else — /karwai,
+# /reconcile-ai, /history, /cloud, /advisor — requires a Bearer JWT.
+AUTH_EXEMPT_PREFIXES = {"/health", "/docs", "/redoc", "/openapi.json"}
 
 
 async def auth_middleware(request: Request, call_next):

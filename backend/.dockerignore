@@ -1,0 +1,45 @@
+# بِسْمِ اللّٰهِ الرَّحْمٰنِ الرَّحِيمِ
+# Backend .dockerignore — keeps the build context lean and keeps local data out of the image.
+
+# Local virtual environment (huge; uv sync installs inside the image)
+.venv/
+venv/
+
+# Environment / secrets — never ship to the server
+.env
+.env.local
+.env.*.local
+
+# Local runtime data (never baked in; container uses its own upload dir)
+uploads/
+*.sqlite
+
+# Legacy "Open de Past" local SQLite history folder (feature removed; never ship)
+Reconciliation History/
+history/
+
+# Python caches and build artifacts
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.coverage
+htmlcov/
+*.egg-info/
+
+# Logs
+*.log
+logs/
+
+# Tests (not part of the runtime image; uv sync --no-dev installs only runtime deps)
+tests/
+
+# IDE / OS junk
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Misc
+.commandcode/
+# وَإِنَّ اللَّهَ لَهُوَ خَيْرُ الرَّازِقِينَ

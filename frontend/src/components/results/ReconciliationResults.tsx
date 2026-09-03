@@ -31,8 +31,7 @@ import {
 } from '@/lib/utils/categorizationUtils';
 import { formatAmount, categoryLabel } from '@/lib/utils/categorizationUtils';
 import { cloudHistoryClient } from '@/lib/api/cloudHistoryClient';
-import { historyClient } from '@/lib/api/historyClient';
-import type { CloudHistoryEntry } from '@/types/cloud-history.types';
+import type { CloudHistoryEntry, MergeHistoryEntry } from '@/types/cloud-history.types';
 import { Input } from '@/components/ui/input';
 import { AdvisorPanel } from '@/components/advisor/AdvisorPanel';
 import { AdvisorChat } from '@/components/advisor/AdvisorChat';
@@ -460,13 +459,8 @@ export function ReconciliationResults({ result, onStartNew, pdfFileName, excelFi
       const token = (session?.user as { access_token?: string } | undefined)?.access_token;
       if (!token) return;
       try {
-        const pastData = await historyClient.loadHistory(fileName);
-        const past = pastData.discrepancies as {
-          transaction_details: string;
-          transaction_date: string;
-          debit_credit_amount: number;
-          category: string;
-        }[];
+        const pastData = await cloudHistoryClient.loadByName(token, fileName);
+        const past: MergeHistoryEntry[] = pastData.discrepancies || [];
         const mapped: DiscrepancyTransaction[] = past.map(p => ({
           'Transaction_date': p.transaction_date,
           'Transaction Detail': p.transaction_details,

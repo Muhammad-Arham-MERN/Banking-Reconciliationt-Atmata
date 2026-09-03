@@ -10,14 +10,14 @@ import React, { useState } from 'react';
 import { useSession } from 'next-auth/react';
 import type { BankStatementFile, CompanyDataFile, ColumnMappingConfiguration } from '../../types/upload';
 import type { ReconciliationResult, DiscrepancyTransaction } from '@/types/reconciliation.types';
-import type { HistoryEntry } from '@/types/history.types';
+import type { MergeHistoryEntry } from '@/types/cloud-history.types';
 import { BankUploadZone } from './BankUploadZone';
 import { CompanyUploadZone } from './CompanyUploadZone';
 import { FormatSelector } from './FormatSelector';
 import { ColumnMappingFields } from './ColumnMappingFields';
 import { ReconciliationResults } from '@/components/results/ReconciliationResults';
 import { reconciliationClient } from '@/lib/api/reconciliationClient';
-import { historyClient } from '@/lib/api/historyClient'; // @deprecated — only loadHistory() still needed for merge; cloud save/list handled by cloudHistoryClient
+import { cloudHistoryClient } from '@/lib/api/cloudHistoryClient';
 import { canSubmitForm, preserveCommonFields, updateColumnMappingValidation } from '../../lib/validation';
 import { Button } from '@/components/ui/button';
 import { History } from 'lucide-react';
@@ -160,9 +160,9 @@ export function UploadForm() {
       }
 
       // Merge past discrepancies if a history file is selected
-      if (selectedCloudFile) {
+      if (selectedCloudFile && token) {
         try {
-          const pastData = await historyClient.loadHistory(selectedCloudFile);
+          const pastData = await cloudHistoryClient.loadByName(token, selectedCloudFile);
           const currentDiscrepancies = result.results.discrepancies || [];
           const mergedDiscrepancies = mergeDiscrepancies(currentDiscrepancies, pastData.discrepancies);
           result.results.discrepancies = mergedDiscrepancies;
@@ -187,7 +187,7 @@ export function UploadForm() {
   // Merge past discrepancies with current ones, suppressing exact duplicates (same details + same date)
   function mergeDiscrepancies(
     current: DiscrepancyTransaction[],
-    past: HistoryEntry[]
+    past: MergeHistoryEntry[]
   ): DiscrepancyTransaction[] {
     const currentKeys = new Set(
       current.map(d => `${d['Transaction Detail'] ?? ''}|${d['Transaction_date'] ?? ''}`)

@@ -18,6 +18,7 @@ import type {
   DeletePastFileResponse,
   ExcelImportResponse,
   PastFileReconciliationType,
+  LoadPastFileByNameResponse,
 } from '@/types/cloud-history.types';
 
 import { signIn } from 'next-auth/react';
@@ -122,6 +123,22 @@ export const cloudHistoryClient = {
       headers: { Authorization: `Bearer ${token}` },
     });
     return handleResponse<LoadPastFileResponse>(response);
+  },
+
+  /**
+   * Load a past file by name (user-scoped) so its discrepancies can be merged
+   * into a new reconciliation. Auth-protected like the rest of the API.
+   */
+  async loadByName(token: string, fileName: string): Promise<LoadPastFileByNameResponse> {
+    const response = await fetch(`${API_BASE_URL}/history/load`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ file_name: fileName }),
+    });
+    return handleResponse<LoadPastFileByNameResponse>(response);
   },
 
   /** Create a new (possibly empty) past reconciliation file. */

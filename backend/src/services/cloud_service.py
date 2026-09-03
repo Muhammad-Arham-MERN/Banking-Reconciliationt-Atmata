@@ -89,6 +89,30 @@ async def get_reconciliation(user_id: int, file_id: int) -> dict | None:
 
 
 # وَهُوَ عَلَى كُلِّ شَيْءٍ قَدِيرٌ
+async def load_reconciliation_by_name(user_id: int, file_name: str) -> dict | None:
+    """
+    Fetch one stored past file by file name, scoped to the authenticated user.
+    Used when merging a past file's discrepancies into a new reconciliation.
+    """
+    row = await db_service.fetchrow(
+        """
+        SELECT id, file_name, data, reconciliation_type
+        FROM reconciliation_data
+        WHERE file_name = $1 AND user_id = $2
+        """,
+        file_name, user_id,
+    )
+    if not row:
+        return None
+    return {
+        "file_id": str(row["id"]),
+        "file_name": row["file_name"],
+        "reconciliation_type": row.get("reconciliation_type") or "bank",
+        "discrepancies": _decode_jsonb(row["data"]),
+    }
+
+
+# وَهُوَ عَلَى كُلِّ شَيْءٍ قَدِيرٌ
 async def create_reconciliation(
     user_id: int, file_name: str, reconciliation_type: str, file_data: list[dict]
 ) -> int:

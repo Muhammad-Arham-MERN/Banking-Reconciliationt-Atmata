@@ -16,8 +16,9 @@ Design decisions (from research.md + contracts/api-contract.md):
 - If detection fails after 3 retries -> 422 with a friendly retry message
   (FR-009). If an extractor fails independently -> partial success response
   naming the failed file (FR-018).
-- Reuses save_upload_file / validate_upload_file / cleanup_uploaded_files,
-  ReconciliationService, and HistoryService (FR-007, FR-013, FR-014, FR-015).
+- Reuses save_upload_file / validate_upload_file / cleanup_uploaded_files and
+  ReconciliationService (FR-007, FR-013, FR-014, FR-015). Past-history merge
+  is cloud-backed via cloud_service (user-scoped).
 """
 
 import asyncio
@@ -27,7 +28,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Form, HTTPException, Request, UploadFile
 
 from src.api.routes import cleanup_uploaded_files, save_upload_file
 from src.config import settings
@@ -62,6 +63,7 @@ router = APIRouter()
 # وَهُوَ عَلَى كُلِّ شَيْءٍ قَدِيرٌ
 @router.post("/reconcile-ai")
 async def reconcile_ai(
+    request: Request,
     bankStatement: UploadFile,
     companyData: UploadFile,
     historyName: Optional[str] = Form(None),
@@ -255,14 +257,17 @@ async def reconcile_ai(
         reconciliation_service = ReconciliationService()
         discrepancies = reconciliation_service.reconcile(bank_transactions, company_transactions)
 
-        # Load past history discrepancies to merge, if requested (FR-013)
+        # Load past history discrepancies to merge, if requested (FR-013).
+        # Cloud-backed and user-scoped: pulls the stored past file belonging to
+        # the authenticated user by name.
         if historyName:
             try:
-                from src.services.history_service import HistoryService
+                from src.services.cloud_service import load_reconciliation_by_name
 
-                history_service = HistoryService()
-                loaded = await history_service.load_history(historyName)
-                past_discrepancies = loaded.get("discrepancies", [])
+                loaded = await load_reconciliation_by_name(
+                    request.state.user_id, historyName
+                )
+                past_discrepancies = (loaded or {}).get("discrepancies", [])
                 if past_discrepancies:
                     discrepancies = _merge_past_discrepancies(discrepancies, past_discrepancies)
             except Exception as e:

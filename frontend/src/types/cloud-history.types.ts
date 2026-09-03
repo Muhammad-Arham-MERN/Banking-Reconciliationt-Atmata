@@ -104,4 +104,22 @@ export interface ExcelImportResponse {
   discrepancies: CloudHistoryEntry[];
 }
 
+// ============================================================================
+// Load by name (merge past file into a new reconciliation)
+// POST /history/load — user-scoped, returns entries with from_past flag
+// ============================================================================
+
+/** A past-file discrepancy entry as returned by the merge load. */
+export interface MergeHistoryEntry extends CloudHistoryEntry {
+  from_past?: boolean;
+}
+
+/** Response from POST /history/load */
+export interface LoadPastFileByNameResponse {
+  status: string;
+  file_name: string;
+  discrepancies: MergeHistoryEntry[];
+  entry_count: number;
+}
+
 /* وَإِنَّ اللَّهَ لَهُوَ خَيْرُ الرَّازِقِينَ */
