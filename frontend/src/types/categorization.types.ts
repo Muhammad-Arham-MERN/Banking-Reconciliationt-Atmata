@@ -79,6 +79,9 @@ export interface CategorizedTransaction extends DiscrepancyTransaction {
 
   /** Formatted PKR currency string for display (e.g., "+PKR 40,771.70", "-PKR 17,929.40") */
   displayValue: string;
+
+  /** True when this transaction was added manually via the "+" popover (feature 8) */
+  isManual?: boolean;
 }
 
 /**
@@ -151,6 +154,51 @@ export type SelectionToggleCallback = (itemId: string) => void;
  * Manual reconciliation execution callback type
  */
 export type ReconciliationExecutionCallback = () => void | Promise<void>;
+
+// ============================================================================
+// FEATURE 008 — UX ENHANCEMENT TYPES
+// ============================================================================
+
+/**
+ * View mode for the discrepancy list: linear (stacked full-width categories)
+ * or grid (2×2 layout, company categories left, bank/vendor categories right).
+ */
+export type ViewMode = 'linear' | 'grid';
+
+/**
+ * Sort direction for a category's Amount column.
+ * 'original' restores the arrival order.
+ */
+export type SortDirection = 'asc' | 'desc' | 'original';
+
+/**
+ * Draft payload for manually adding a discrepancy to a category (feature 8).
+ */
+export interface ManualDiscrepancyDraft {
+  /** Transaction date in YYYY-MM-DD format */
+  date: string;
+  /** Transaction details / description */
+  details: string;
+  /** Amount (raw signed value per the category's source convention) */
+  amount: number;
+  /** Whether this entry originated from a past file */
+  fromPast: boolean;
+}
+
+/**
+ * One undoable history entry: a manual reconciliation (or manual addition /
+ * restore) that removed or added items from the live list.
+ */
+export interface DiscrepancyHistoryEntry {
+  /** Stable id for the drawer row */
+  id: string;
+  /** ISO timestamp of when the action happened */
+  timestamp: string;
+  /** Human-readable action label (e.g. "Manual reconciliation") */
+  action: string;
+  /** The items affected by the action (snapshot) */
+  items: DiscrepancyTransaction[];
+}
 
 // ============================================================================
 // TYPE GUARDS

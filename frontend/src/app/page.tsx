@@ -7,7 +7,7 @@ export const dynamic = "force-dynamic";
 
 export default async function Home() {
   const session = await auth();
-  if (session) redirect("/upload");
+  if (session) redirect("/upload-ai");
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-gray-50 dark:bg-gray-950">
@@ -19,7 +19,7 @@ export default async function Home() {
           Sign in with Google to get started
         </p>
         <div className="flex justify-center">
-          <SignInButton redirectTo="/upload" />
+          <SignInButton redirectTo="/upload-ai" />
         </div>
       </div>
     </div>

@@ -10,6 +10,14 @@ import type {
   SaveCloudFileRequest,
   SaveCloudFileResponse,
   CloudHistoryEntry,
+  PastFileListResponse,
+  LoadPastFileResponse,
+  CreatePastFileRequest,
+  UpdatePastFileRequest,
+  UpdatePastFileResponse,
+  DeletePastFileResponse,
+  ExcelImportResponse,
+  PastFileReconciliationType,
 } from '@/types/cloud-history.types';
 
 import { signIn } from 'next-auth/react';
@@ -94,6 +102,143 @@ export const cloudHistoryClient = {
       body: JSON.stringify(body),
     });
     return handleResponse<SaveCloudFileResponse>(response);
+  },
+
+  // --------------------------------------------------------------------------
+  // Past Reconciliations — View / Create / Edit / Delete / Excel
+  // --------------------------------------------------------------------------
+
+  /** Metadata for every stored past file (newest first). */
+  async listPastFiles(token: string): Promise<PastFileListResponse> {
+    const response = await fetch(`${API_BASE_URL}/api/cloud/files`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    return handleResponse<PastFileListResponse>(response);
+  },
+
+  /** Full contents of one stored past file (user-scoped). */
+  async loadPastFile(token: string, fileId: string): Promise<LoadPastFileResponse> {
+    const response = await fetch(`${API_BASE_URL}/api/cloud/files/${fileId}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    return handleResponse<LoadPastFileResponse>(response);
+  },
+
+  /** Create a new (possibly empty) past reconciliation file. */
+  async createPastFile(
+    token: string,
+    body: CreatePastFileRequest,
+  ): Promise<LoadPastFileResponse> {
+    const response = await fetch(`${API_BASE_URL}/api/cloud/files`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify(body),
+    });
+    return handleResponse<LoadPastFileResponse>(response);
+  },
+
+  /** Update a past file's data and/or rename it. */
+  async updatePastFile(
+    token: string,
+    fileId: string,
+    body: UpdatePastFileRequest,
+  ): Promise<UpdatePastFileResponse> {
+    const response = await fetch(`${API_BASE_URL}/api/cloud/files/${fileId}`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify(body),
+    });
+    return handleResponse<UpdatePastFileResponse>(response);
+  },
+
+  /** Delete a stored past file. */
+  async deletePastFile(token: string, fileId: string): Promise<DeletePastFileResponse> {
+    const response = await fetch(`${API_BASE_URL}/api/cloud/files/${fileId}`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    return handleResponse<DeletePastFileResponse>(response);
+  },
+
+  /**
+   * Download a past-file Excel template (prefilled for edit, empty for create)
+   * as a blob and trigger a browser download. Resolves with the chosen filename.
+   */
+  async downloadPastFileExcel(
+    token: string,
+    fileId?: string,
+    reconciliationType: PastFileReconciliationType = 'bank',
+  ): Promise<string> {
+    const url = fileId != null
+      ? `${API_BASE_URL}/api/cloud/files/${fileId}/excel`
+      : `${API_BASE_URL}/api/cloud/excel-template?reconciliation_type=${reconciliationType}`;
+
+    const response = await fetch(url, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (response.status === 401) {
+      await signIn('google', { callbackUrl: window.location.href });
+      throw new CloudHistoryApiError('Session expired. Please sign in again.', 401);
+    }
+    if (!response.ok) {
+      let message = 'Failed to download Excel template';
+      try {
+        const errorData = await response.json();
+        message = errorData.detail || errorData.message || message;
+      } catch {
+        message = `Failed to download Excel template (${response.status})`;
+      }
+      throw new CloudHistoryApiError(message, response.status);
+    }
+
+    const disposition = response.headers.get('Content-Disposition') || '';
+    const match = disposition.match(/filename="?([^"]+)"?/);
+    const fallback = fileId != null ? 'past-reconciliation.xlsx' : `${reconciliationType}-past-reconciliation-template.xlsx`;
+    const filename = match ? match[1] : fallback;
+
+    const blob = await response.blob();
+    const objectUrl = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = objectUrl;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(objectUrl);
+    return filename;
+  },
+
+  /**
+   * Upload a filled template. With file_id it updates that stored file
+   * (Edit with Excel); without it, creates a new file (Create with Excel).
+   */
+  async importPastFileExcel(
+    token: string,
+    file: File,
+    options: {
+      fileId?: string;
+      fileName?: string;
+      reconciliationType?: PastFileReconciliationType;
+    } = {},
+  ): Promise<ExcelImportResponse> {
+    const formData = new FormData();
+    formData.append('file', file);
+    if (options.fileId != null) formData.append('file_id', String(options.fileId));
+    if (options.fileName) formData.append('file_name', options.fileName);
+    formData.append('reconciliation_type', options.reconciliationType ?? 'bank');
+
+    const response = await fetch(`${API_BASE_URL}/api/cloud/files/import-excel`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+      body: formData,
+    });
+    return handleResponse<ExcelImportResponse>(response);
   },
 };
 

@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 
 export const dynamic = "force-dynamic";
 import { DummyResultsViewer } from "./DummyResultsViewer";
+import { ReconciliationTypeProvider } from "@/components/providers/reconciliation-type-provider";
 
 export default async function TestsPage() {
   const session = await auth();
@@ -26,7 +27,9 @@ export default async function TestsPage() {
             Agent. Click &quot;Reconcile With Agent&quot; to test the advisor.
           </p>
         </div>
-        <DummyResultsViewer />
+        <ReconciliationTypeProvider>
+          <DummyResultsViewer />
+        </ReconciliationTypeProvider>
       </div>
     </main>
   );

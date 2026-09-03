@@ -78,6 +78,14 @@ CREATE INDEX IF NOT EXISTS idx_reconciliation_data_user_id
 ON reconciliation_data(user_id);
 """
 
+# Past Reconciliations feature: which ledger type a stored file belongs to.
+# Needed so an EMPTY created file still knows whether its four Excel sections
+# are the Bank set or the Vendor set (not derivable from zero discrepancy rows).
+ALTER_RECONCILIATION_ADD_TYPE = """
+ALTER TABLE reconciliation_data
+ADD COLUMN IF NOT EXISTS reconciliation_type VARCHAR(20) NOT NULL DEFAULT 'bank';
+"""
+
 # ---- Judge Structure by its Cover (pdf structure profiles) -----------------
 # Stores previously-extracted PDF structures keyed by normalized entity name +
 # entity type ("bank" | "vendor"), so the Judge agent can short-circuit full
@@ -115,6 +123,7 @@ MIGRATIONS: List[str] = [
     CREATE_RECONCILIATION_DATA,
     ALTER_USERS_ADD_FILES,
     ALTER_RECONCILIATION_ADD_USER_ID,
+    ALTER_RECONCILIATION_ADD_TYPE,
     CREATE_IDX_RECONCILIATION_USER_ID,
     CREATE_PDF_STRUCTURE_PROFILES,
     CREATE_UQ_PDF_STRUCTURE_PROFILE,

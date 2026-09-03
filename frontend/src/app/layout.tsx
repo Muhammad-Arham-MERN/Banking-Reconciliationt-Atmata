@@ -5,6 +5,7 @@ import AuthSessionProvider from "@/components/providers/session-provider";
 import { ThemeProvider } from "@/components/providers/theme-provider";
 import SessionStatus from "@/components/auth/session-status";
 import { ThemeToggle } from "@/components/theme/theme-toggle";
+import { CloseTabWarning } from "@/components/auth/close-tab-warning";
 
 const spaceGrotesk = Space_Grotesk({
   variable: "--font-sans",
@@ -40,22 +41,17 @@ export default function RootLayout({
           disableTransitionOnChange
         >
           <AuthSessionProvider>
+            <CloseTabWarning />
             <header className="flex items-center justify-between border-b border-gray-200 bg-white px-6 py-3 dark:border-gray-800 dark:bg-gray-950">
-              <span className="text-lg font-semibold text-gray-900 dark:text-gray-100">
+              <a href="/upload-ai" className="text-lg font-semibold text-gray-900 dark:text-gray-100">
                 Bank Reconciliation
-              </span>
+              </a>
               <nav className="flex items-center gap-4 text-sm font-medium">
                 <a
-                  href="/upload"
+                  href="/upload-ai"
                   className="text-gray-600 hover:text-gray-900 dark:text-gray-300 dark:hover:text-gray-100"
                 >
-                  Upload
-                </a>
-                <a
-                  href="/tests"
-                  className="text-gray-600 hover:text-gray-900 dark:text-gray-300 dark:hover:text-gray-100"
-                >
-                  Test Data
+                  Upload (AI)
                 </a>
                 <div className="flex items-center gap-3">
                   <ThemeToggle />
