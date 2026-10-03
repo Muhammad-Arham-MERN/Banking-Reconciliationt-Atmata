@@ -34,7 +34,10 @@ class AdvisorDiscrepancy(BaseModel):
     Transaction_Detail: str = Field(description="Transaction details")
     Debit_Credit: float = Field(
         alias="Debit/Credit",
-        description="Signed amount: negative = debit, positive = credit",
+        description=(
+            "Signed amount under the canonical convention: Company and Bank "
+            "debit = +, credit = -; Vendor debit = -, credit = +"
+        ),
     )
     FROM: Literal["Bank", "Company"] = Field(description="Source of the item")
     from_past: Optional[bool] = Field(default=None, description="History-merged entry flag")

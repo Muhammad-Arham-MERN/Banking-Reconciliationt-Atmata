@@ -16,6 +16,12 @@ python-dateutil==2.8.2
 pydantic==2.5.0
 pydantic-settings==2.1.0
 
+# Security / Encryption (company credential encryption at rest)
+cryptography>=43.0.0
+
+# Notifications (company onboarding request email)
+resend==2.49.1
+
 # Testing
 pytest==7.4.3
 pytest-asyncio==0.21.1

@@ -4,6 +4,7 @@ CockroachDB database connection service
 PostgreSQL-compatible connection using asyncpg
 """
 import asyncio
+import contextlib
 import os
 import logging
 from typing import Optional
@@ -110,6 +111,23 @@ class DatabaseService:
         async with self._pool.acquire() as conn:
             row = await conn.fetchrow(query, *args)
             return dict(row) if row else None
+
+    # وَهُوَ عَلَى كُلِّ شَيْءٍ قَدِيرٌ
+    @contextlib.asynccontextmanager
+    async def transaction(self):
+        """Yield a single connection wrapped in one transaction.
+
+        Multi-statement operations that must be atomic (e.g. the company-delete
+        cascade in company_service) need to share ONE connection; a sequence of
+        standalone execute() calls would each grab a different pooled connection
+        with no shared transaction. Any exception raised inside the block rolls
+        every statement back.
+        """
+        if not self._pool:
+            raise RuntimeError("Database not connected")
+        async with self._pool.acquire() as conn:
+            async with conn.transaction():
+                yield conn
 
     @property
     def is_connected(self) -> bool:

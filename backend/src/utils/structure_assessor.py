@@ -1372,6 +1372,11 @@ def _signed_amount(
     cell already carries its sign: negative = debit, positive = credit. The
     signed value is the cell itself, sign-normalized to the reconciliation
     convention.
+
+    NOTE: this is the statement's own BALANCE-MOVEMENT sign, used to walk the
+    printed cumulative balance. It is intentionally independent of the §2 wire
+    `Debit/Credit` row sign written by the extractors
+    (contracts/sign-convention.md §2) — do not conflate the two.
     """
     if combined_idx is not None:
         amount = parse_amount(row.get(columns[combined_idx]))

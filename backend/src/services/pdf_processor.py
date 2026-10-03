@@ -220,14 +220,19 @@ class PDFProcessor:
 
     def transform_to_standard_format(
         self,
-        df: pd.DataFrame
+        df: pd.DataFrame,
+        reconciliation_type: str = "bank"
     ) -> List[Dict[str, Any]]:
         """
         Transform extracted PDF data to standardized transaction format
         Merge debit/credit columns, convert to integer, normalize dates
 
+        ``reconciliation_type`` selects the finalized statement-side sign: a
+        "bank" statement is debit +/credit -; a vendor ledger is debit -/credit +.
+
         Args:
             df: DataFrame from extract_bank_statement()
+            reconciliation_type: "bank" (default) or "vendor".
 
         Returns:
             List of standardized transaction dictionaries
@@ -237,6 +242,9 @@ class PDFProcessor:
         """
         import time
         start_time = time.time()
+
+        # Bank statements invert the merged sign; vendor ledgers do not.
+        flip_sign = reconciliation_type != "vendor"
 
         try:
             if df.empty:
@@ -265,7 +273,8 @@ class PDFProcessor:
                         amount_value=None,  # Not used for 4-column format
                         debit_value=debit_value,
                         credit_value=credit_value,
-                        source_type='pdf'
+                        source_type='pdf',
+                        flip_sign=flip_sign
                     )
 
                     if transaction:
@@ -316,13 +325,15 @@ class PDFProcessor:
         """
         return normalize_pdf_date(date_str)
 
-    def process_pdf(self, pdf_path: Path) -> Dict[str, Any]:
+    def process_pdf(self, pdf_path: Path, reconciliation_type: str = "bank") -> Dict[str, Any]:
         """
         Complete PDF processing pipeline: extract and transform
         Main entry point for PDF processing
 
         Args:
             pdf_path: Path to PDF file
+            reconciliation_type: "bank" (default) or "vendor" — selects the
+                finalized statement-side debit/credit sign.
 
         Returns:
             Dictionary with processed data and metadata
@@ -368,7 +379,7 @@ class PDFProcessor:
                 logger.warning("Balance column not found in extracted PDF data")
 
             # Transform to standard format
-            standardized_transactions = self.transform_to_standard_format(df)
+            standardized_transactions = self.transform_to_standard_format(df, reconciliation_type)
 
             total_processing_time_ms = int((time.time() - total_start_time) * 1000)
 

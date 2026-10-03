@@ -1,0 +1,107 @@
+# Implementation Plan: Admin Dashboard (Camri Desk)
+
+**Branch**: `008-admin-dashboard` | **Date**: 2026-09-30 | **Spec**: [spec.md](./spec.md)
+**Input**: Feature specification from `/specs/008-admin-dashboard/spec.md`
+
+## Summary
+
+Build the Developer-only control surface for onboarding client companies: a hidden `AdminDashAccess` route with a username/password sign-in (checked server-side against environment values), and a single-page dashboard that lists, creates, edits, and deletes companies. Each company carries a required name, an optional PNG/JPG/SVG logo, an access password stored **encrypted at rest with Fernet** (key from the environment), a whole-Rupee price, and a Payment Status (Pending / Free Trial / Paid, default Pending). A dedicated `companies` table is added to the existing CockroachDB schema via the raw-asyncpg migration list. No billing logic, no company-facing login (both deferred to later specs), and no automated tests (Developer instruction).
+
+## Technical Context
+
+**Language/Version**: Python 3.13 (backend, `requires-python >=3.13`); TypeScript 5.x on Next.js 16.2.9 / React 19.2.4 (frontend)  
+**Primary Dependencies**: Backend — FastAPI, asyncpg, pydantic v2 + pydantic-settings, python-multipart, PyJWT, **cryptography (NEW, for Fernet)**. Frontend — Next.js App Router (RSC), shadcn (`base-nova` style on Base UI), Tailwind v4, lucide-react, react-dropzone. Existing NextAuth v5 (Google) is **not** used for admin auth.  
+**Storage**: CockroachDB via raw asyncpg (`db_service`); company logos on the filesystem in a **dedicated directory outside `UPLOAD_DIR`**  
+**Testing**: None — automated tests are intentionally omitted per the Developer's explicit instruction; verification is a manual smoke test (see quickstart.md)  
+**Target Platform**: Linux container for the backend (`python:3.13-bookworm-slim`), browser for the frontend  
+**Project Type**: Web application (existing `backend/` + `frontend/` split)  
+**Performance Goals**: Admin list/create/update/delete complete in well under a second at the expected tens-of-companies scale; a single concurrent admin  
+**Constraints**: Admin credentials and the Fernet key come from environment variables only; the admin session is browser-session scoped (ends when the browser closes) with no "remember me"; price is stored, never billed; no automated tests  
+**Scale/Scope**: One admin, tens of companies, one dashboard page, ~7 backend endpoints
+
+## Constitution Check
+
+*GATE: Must pass before Phase 0 research. Re-check after Phase 1 design.*
+
+| Principle | Status | Assessment |
+|-----------|--------|------------|
+| I. Strict Instruction Following | ✅ PASS | No billing/price-structure logic is built (FR-015); no automated tests are written (explicit instruction); spec FRs are implemented verbatim. |
+| II. Developer Stack Authority | ✅ PASS | Uses the existing FastAPI + asyncpg/CockroachDB + Next.js + shadcn stack. `cryptography`/Fernet is the Developer-mandated library for the encryption FR. No alternative framework is introduced. |
+| III. Supervised Collaboration | ✅ PASS | Design decisions are documented with alternatives in research.md for Developer review; no autonomous architecture changes. |
+| IV. Constructive Objection | ✅ PASS | Two risks are raised with mitigations (SVG serving; the upload-cleanup directory trap) rather than silently accepted — see research.md. |
+| V. Controlled Creativity | ✅ PASS | No novel algorithms; all logic is straightforward CRUD plus one encryption primitive. |
+| VI. Ambiguity Resolution | ✅ PASS | All 5 spec ambiguities were resolved in the 2026-09-30 clarification session; no `NEEDS CLARIFICATION` remains in Technical Context. |
+| Code Standards 1–3 | ⚠️ REQUIRED | Every new Python/TS file MUST start with the Bismillah header, end with the footer, and mark logical crux methods with the inline marker. Applies to every new file listed below. |
+
+**Initial gate: PASS.** Two Developer-facing decisions are flagged (not blockers): the exact-case hidden route folder name, and the intentional absence of automated tests.
+
+## Project Structure
+
+### Documentation (this feature)
+
+```text
+specs/008-admin-dashboard/
+├── plan.md              # This file (/sp.plan command output)
+├── research.md          # Phase 0 output (decisions + alternatives)
+├── data-model.md        # Phase 1 output (entities, table, validation)
+├── quickstart.md        # Phase 1 output (manual verification)
+├── contracts/
+│   └── admin-api.yaml   # Phase 1 output (OpenAPI 3.1 for /api/admin/*)
+├── checklists/
+│   └── requirements.md  # Spec quality checklist (/sp.specify + /sp.clarify)
+└── tasks.md             # Phase 2 output (/sp.tasks — NOT created here)
+```
+
+### Source Code (repository root)
+
+```text
+backend/
+├── pyproject.toml                                  # + cryptography dependency
+├── requirements.txt / requirements.prod.txt        # + cryptography
+├── uv.lock                                         # regenerated by `uv sync`
+├── .env / .env.example                             # + ADMIN_USERNAME, ADMIN_PASSWORD, ADMIN_JWT_SECRET, FERNET_KEY, COMPANY_LOGO_DIR
+└── src/
+    ├── config.py                                   # + admin/encryption/logo settings
+    ├── main.py                                     # + register admin router
+    ├── api/
+    │   ├── auth_middleware.py                      # + /api/admin branch (login exempt, rest admin-JWT verified)
+    │   └── admin_routes.py                         # NEW — /api/admin/* endpoints
+    ├── models/
+    │   ├── db_migrations.py                        # + CREATE_COMPANIES + unique index
+    │   └── admin_models.py                         # NEW — pydantic request/response models
+    ├── services/
+    │   ├── admin_auth_service.py                   # NEW — credential check (constant-time) + admin JWT issue/verify
+    │   ├── company_service.py                      # NEW — companies CRUD over db_service
+    │   └── company_crypto_service.py               # NEW — Fernet encrypt/decrypt wrapper
+    └── utils/
+        └── company_logo_service.py                 # NEW — logo save/read/delete in the dedicated directory
+
+frontend/
+└── src/
+    ├── app/
+    │   └── AdminDashAccess/
+    │       └── page.tsx                            # NEW — hidden route (sign-in form ⇄ dashboard)
+    ├── components/
+    │   └── admin/
+    │       ├── admin-dashboard.tsx                 # NEW — client shell (token state machine)
+    │       ├── admin-sign-in-form.tsx              # NEW — username/password form
+    │       ├── companies-table.tsx                 # NEW — shadcn Table list
+    │       └── company-form-dialog.tsx             # NEW — shadcn Dialog for add/edit
+    └── lib/api/
+        └── adminClient.ts                          # NEW — admin API client (Bearer admin token, FormData for logos)
+```
+
+**Structure Decision**: Web application (Option 2) — the repo already has separate `backend/` and `frontend/` roots, so the feature is added along the existing seams: a new `admin_routes.py` router registered in `main.py`, new service/model modules mirroring `cloud_routes.py` + `cloud_service.py`, one new hidden App Router page with a `components/admin/` feature folder, and a new `lib/api/adminClient.ts` mirroring `cloudHistoryClient.ts`. No new top-level projects, no ORM, no new state library.
+
+## Complexity Tracking
+
+> **Fill ONLY if Constitution Check has violations that must be justified**
+
+No unjustified violations. The table below records deliberate, Developer-directed scope fences rather than violations:
+
+| Decision | Why Needed | Simpler Alternative Rejected Because |
+|----------|------------|--------------------------------------|
+| No automated tests | Developer explicitly instructed "Dont do any tests, just finish the task" (Constitution Principle I) | Writing pytest/Playwright suites would contradict the explicit instruction and expand scope beyond the request |
+| Dedicated logo directory outside `UPLOAD_DIR` | `cleanup_old_files` (20-min retention) and `cleanup_all_files` (shutdown) delete files in `UPLOAD_DIR`; logos must persist | Reusing `UPLOAD_DIR` would silently delete every company logo on the next restart |
+| Separate admin JWT (not NextAuth Google) | Spec requires username/password on a hidden route, independent of normal users | NextAuth Google sign-in contradicts the spec; a Google-linked admin would be discoverable/undesired |
+| Price stored, not billed | Developer will implement the price structure himself in later specs | Building billing now is explicitly out of scope and would be rework |

@@ -12,13 +12,18 @@ import type { ReconciliationResult } from '@/types/reconciliation.types';
 import { BankUploadZone } from './BankUploadZone';
 import { CompanyUploadZone } from './CompanyUploadZone';
 import { ReconciliationResults } from '@/components/results/ReconciliationResults';
-import { AIProcessingOverlay } from '@/components/ai/ai-processing-overlay';
-import { aiReconciliationClient, generateRequestId } from '@/lib/api/aiReconciliationClient';
+import { LiveProcessingOverlay, type LiveEvent } from '@/components/ai/live-processing-overlay';
+import { aiReconciliationClient, generateRequestId, type ReconciliationStageFrame } from '@/lib/api/aiReconciliationClient';
 import { useSession } from 'next-auth/react';
 import { useReconciliationType } from '@/components/providers/reconciliation-type-provider';
 import { Button } from '@/components/ui/button';
 import { History } from 'lucide-react';
 import { PastReconciliationsDrawer } from '@/components/history/PastReconciliationsDrawer';
+
+/** Module-level monotonic id for live events — never reset, so ids stay unique
+ * across the whole session even after form resets / re-submits (a reset-to-0
+ * counter would collide with events still rendered during fades). */
+let liveEventSeq = 0;
 
 /**
  * AI-driven upload form (FR-001): uploads PDF + Excel, selects optional past
@@ -50,8 +55,31 @@ export function UploadAIConfig() {
   const [partialMessage, setPartialMessage] = useState<string | null>(null);
   const [reconciliationResult, setReconciliationResult] = useState<ReconciliationResult | null>(null);
 
+  // Live-progress state (SSE sidecar)
+  const [liveEvents, setLiveEvents] = useState<LiveEvent[]>([]);
+  const [liveProgress, setLiveProgress] = useState(0);
+  const [overlayDone, setOverlayDone] = useState(false);
+  // "reveal" lets the completion keyboard/typewriter hold, then fades the
+  // whole overlay out before the results tree swaps in.
+  const [revealResults, setRevealResults] = useState(false);
+
   // Id of the in-flight AI request; used to cancel on Stop / page reload.
   const activeRequestIdRef = useRef<string | null>(null);
+  // Tracks whether the main result JSON has landed, so we can coordinate the
+  // reveal with the SSE "done" frame whichever arrives first.
+  const resultReadyRef = useRef(false);
+  const progressRef = useRef(0);
+  const revealTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const overlayTypingDoneRef = useRef(false);
+  // Mirror of `overlayDone` kept in a ref so reveal coordination NEVER reads a
+  // stale state closure. handleSubmit captures the render it was created in, so
+  // a plain `overlayDone` captured there stays false for the whole run and the
+  // overlay would never be dismissed.
+  const overlayDoneRef = useRef(false);
+  const updateOverlayDone = useCallback((value: boolean) => {
+    overlayDoneRef.current = value;
+    setOverlayDone(value);
+  }, []);
 
   const handleBankFileUpload = (file: BankStatementFile) => setBankStatement(file);
   const handleCompanyFileUpload = (file: CompanyDataFile) => setCompanyData(file);
@@ -70,7 +98,66 @@ export function UploadAIConfig() {
     setWasStopped(false);
     setPartialMessage(null);
     setReconciliationResult(null);
+    setLiveEvents([]);
+    setLiveProgress(0);
+    updateOverlayDone(false);
+    setRevealResults(false);
+    resultReadyRef.current = false;
+    progressRef.current = 0;
+    overlayTypingDoneRef.current = false;
+    if (revealTimerRef.current) {
+      clearTimeout(revealTimerRef.current);
+      revealTimerRef.current = null;
+    }
   };
+
+  // Apply an SSE stage frame to the overlay (append event + move the gauge).
+  const handleStageFrame = useCallback((frame: ReconciliationStageFrame) => {
+    liveEventSeq += 1;
+    setLiveEvents((prev) => [...prev, {
+      id: liveEventSeq,
+      key: frame.key,
+      message: frame.message,
+      sentiment: frame.sentiment,
+      emoji: frame.emoji,
+    }]);
+    if (frame.sentiment === 'positive') {
+      progressRef.current = Math.min(100, progressRef.current + (frame.progress_delta || 0));
+    } else if (frame.sentiment === 'negative') {
+      progressRef.current = Math.max(0, progressRef.current - (frame.progress_delta || 0));
+    }
+    // Neutral holds.
+    setLiveProgress(progressRef.current);
+  }, []);
+
+  // Once BOTH the real result is ready AND the SSE says done, wait for the
+  // keyboard to finish typing "Processing Complete", then fade the overlay to
+  // reveal results (onTypingComplete fires from the overlay).
+  const coordinateReveal = useCallback(() => {
+    // Read live refs, never state closures. By the time the result lands the
+    // render that created handleSubmit is long gone, so `overlayDone` from that
+    // closure would still read false and bail out before the reveal.
+    if (!resultReadyRef.current || !overlayDoneRef.current) return;
+    if (!overlayTypingDoneRef.current) return;
+    if (revealTimerRef.current) clearTimeout(revealTimerRef.current);
+    setRevealResults(true);
+    setIsSubmitting(false);
+    activeRequestIdRef.current = null;
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }, []);
+
+  // Re-run the reveal whenever the SSE "done" lands (it may arrive after the
+  // main result, or vice versa — whichever is last triggers the reveal).
+  useEffect(() => {
+    coordinateReveal();
+  }, [coordinateReveal, overlayDone]);
+
+  // The overlay calls this when the keyboard has finished typing. If both the
+  // result and the SSE-done have already landed, reveal immediately.
+  const handleTypingComplete = useCallback(() => {
+    overlayTypingDoneRef.current = true;
+    coordinateReveal();
+  }, [coordinateReveal]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -80,9 +167,23 @@ export function UploadAIConfig() {
     }
 
     // Generate the request id up front so we can cancel the backend run
-    // before the response arrives (Stop button, page reload).
+    // before the response arrives (Stop button, page reload), and both the
+    // main POST and the SSE sidecar share it.
     const requestId = generateRequestId();
     activeRequestIdRef.current = requestId;
+
+    // Reset live-progress state for this run.
+    setLiveEvents([]);
+    setLiveProgress(0);
+    updateOverlayDone(false);
+    setRevealResults(false);
+    resultReadyRef.current = false;
+    progressRef.current = 0;
+    overlayTypingDoneRef.current = false;
+    if (revealTimerRef.current) {
+      clearTimeout(revealTimerRef.current);
+      revealTimerRef.current = null;
+    }
 
     setIsSubmitting(true);
     setErrorMessage(null);
@@ -91,8 +192,31 @@ export function UploadAIConfig() {
     setPartialMessage(null);
     setReconciliationResult(null);
 
+    const token = (session?.user as { access_token?: string } | undefined)?.access_token;
+
+    // Fire the SSE progress sidecar in parallel (non-blocking; failures are
+    // swallowed so the real result is what drives the reveal). The main POST
+    // registers the run on the server; the sidecar must open AFTER that
+    // registration lands, so nudge it ~400ms so it doesn't 404 on a not-yet-
+    // active request id (the backend falls back to an immediate done otherwise).
+    void (async () => {
+      await new Promise((r) => setTimeout(r, 400));
+      return aiReconciliationClient
+        .streamProgress(requestId, token, handleStageFrame)
+        .then((state) => {
+          if (state === 'done') {
+            setLiveProgress(100);
+            updateOverlayDone(true);
+          } else if (state === 'error') {
+            updateOverlayDone(true); // let the reveal proceed; error banner shows
+          }
+          // cancelled — handled by the main POST's 499 path.
+        });
+    })().catch(() => {
+      // Sidecar failed (network/abort); don't block the real result.
+    });
+
     try {
-      const token = (session?.user as { access_token?: string } | undefined)?.access_token;
       const result = await aiReconciliationClient.processReconciliation(
         bankStatement.file,
         companyData.file,
@@ -103,6 +227,7 @@ export function UploadAIConfig() {
         token
       );
 
+      resultReadyRef.current = true;
       if (result.processing_status === 'partial' || result.processing_status === 'error') {
         // Partial success: show successful side's data + clear message (FR-018)
         setPartialMessage(result.message || 'One of the files could not be processed. Please try again.');
@@ -110,7 +235,17 @@ export function UploadAIConfig() {
       } else {
         setReconciliationResult(result);
       }
-      window.scrollTo({ top: 0, behavior: 'smooth' });
+      coordinateReveal();
+      // Safety net: if the SSE sidecar never reports "done" (network blip,
+      // proxy buffering, etc.), force the reveal so the user is never stuck
+      // on the overlay after the real result has already arrived.
+      if (!overlayDoneRef.current) {
+        setTimeout(() => {
+          if (resultReadyRef.current && !overlayDoneRef.current) {
+            updateOverlayDone(true);
+          }
+        }, 6000);
+      }
     } catch (error) {
       const err = error as Error & { code?: string; status?: number };
       // If the user cancelled, show a quiet confirmation instead of an error.
@@ -126,8 +261,13 @@ export function UploadAIConfig() {
         error instanceof Error ? error.message : 'We couldn\'t analyze your files. Please try again.'
       );
     } finally {
-      setIsSubmitting(false);
-      activeRequestIdRef.current = null;
+      // Only the error/cancel path reaches here with no result; hide the
+      // overlay so the error/stopped banner shows. On success the overlay is
+      // dismissed by coordinateReveal() after the completion choreography.
+      if (!resultReadyRef.current) {
+        setIsSubmitting(false);
+        activeRequestIdRef.current = null;
+      }
     }
   };
 
@@ -164,9 +304,12 @@ export function UploadAIConfig() {
 
   const canSubmit = !!bankStatement?.isValid && !!companyData?.isValid && !isSubmitting;
 
-  if (reconciliationResult) {
+  // Show the results only once the overlay's completion choreography has
+  // finished and the whole overlay has faded away (revealResults). The result
+  // JSON may land earlier — it is held until the reveal.
+  if (reconciliationResult && revealResults) {
     return (
-      <div className="w-full max-w-6xl mx-auto p-6">
+      <div className="w-full max-w-6xl mx-auto p-6 fade-in">
         {partialMessage && (
           <div className="mb-4 bg-amber-50 border border-amber-200 rounded-lg p-4 dark:bg-amber-950/40 dark:border-amber-900">
             <div className="text-sm text-amber-800 dark:text-amber-200">
@@ -187,7 +330,15 @@ export function UploadAIConfig() {
 
   return (
     <div className="w-full max-w-6xl mx-auto p-6">
-      {isSubmitting && <AIProcessingOverlay onStop={handleStopProcessing} />}
+      {isSubmitting && (
+        <LiveProcessingOverlay
+          events={liveEvents}
+          progress={liveProgress}
+          done={overlayDone}
+          onStop={handleStopProcessing}
+          onTypingComplete={handleTypingComplete}
+        />
+      )}
       <div className="space-y-6">
         {/* Past Reconciliations — button opens the right-side drawer */}
         <div className="rounded-xl border border-purple-200 bg-gradient-to-br from-purple-50/70 via-white to-purple-50/30 px-5 py-4 shadow-sm dark:border-purple-900 dark:from-gray-900 dark:via-gray-900 dark:to-gray-900">
@@ -283,8 +434,8 @@ export function UploadAIConfig() {
               </div>
               <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
                 {reconciliationType === 'bank'
-                  ? 'Bank statement: Credit is +, Debit is - (standard).'
-                  : 'Vendor ledger: Debit is +, Credit is - (own convention).'}
+                  ? 'Bank statement: Debit is +, Credit is - (finalized convention).'
+                  : 'Vendor ledger: Debit is -, Credit is + (finalized convention).'}
               </p>
             </div>
             <div className="bg-white/70 border border-gray-200 rounded-lg p-4 max-w-md mx-auto dark:bg-gray-900/70 dark:border-gray-800">

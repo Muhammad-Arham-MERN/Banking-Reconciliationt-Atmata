@@ -24,7 +24,7 @@ export const authConfig: NextAuthConfig = {
     maxAge: 24 * 60 * 60,
   },
   pages: {
-    signIn: "/",
+    signIn: "/login",
   },
   callbacks: {
     async jwt({ token, profile }) {

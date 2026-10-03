@@ -56,3 +56,8 @@ tmp/
 
 # Uploads (if not persisting)
 uploads/*
+
+# Persistent runtime data — company logos for the admin dashboard.
+# Deliberately outside uploads/ so the 20-minute retention and shutdown
+# cleanups (which sweep uploads/) never delete them.
+data/

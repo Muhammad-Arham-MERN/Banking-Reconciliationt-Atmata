@@ -1,0 +1,410 @@
+openapi: 3.1.0
+info:
+  title: Admin Dashboard API (Camri Desk)
+  version: 1.0.0
+  description: |
+    Developer-only company management API backing the hidden `AdminDashAccess` route.
+
+    Authentication: `POST /api/admin/login` is the only public endpoint. Every other
+    `/api/admin/*` endpoint requires `Authorization: Bearer <admin_token>` where the token
+    is the admin JWT returned by login. Missing/invalid tokens yield 401.
+
+    Error shape: `{ "error": <code>, "message": <human text>, "details": <object|null> }`.
+    Middleware-level failures (401 from the auth middleware, 400 from the security
+    middleware, 429 from the rate limiter, 503 during shutdown) return
+    `{ "error", "message", "status_code" }` instead.
+servers:
+  - url: http://localhost:8000
+    description: Local development
+
+tags:
+  - name: admin-auth
+  - name: companies
+
+paths:
+  /api/admin/login:
+    post:
+      tags: [admin-auth]
+      summary: Sign in to the admin dashboard
+      description: |
+        Verifies the admin username and password against the backend environment values
+        using a constant-time comparison, then issues an admin JWT. A failure returns one
+        generic message and does not disclose which field was wrong (FR-004).
+        Credentials are sent in the JSON body, never the query string (research R2).
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdminLoginRequest'
+      responses:
+        '200':
+          description: Credentials accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminLoginResponse'
+        '401':
+          description: Invalid credentials
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: invalid_credentials
+                message: Invalid username or password.
+                details: null
+        '503':
+          description: Admin credentials are not configured on the server
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/admin/companies:
+    get:
+      tags: [companies]
+      summary: List all registered companies
+      description: |
+        Returns every company with its name, logo URL, price, payment status, and a
+        `has_password` flag. The password and its ciphertext are never included
+        (FR-006, FR-007; research R5).
+      responses:
+        '200':
+          description: Company list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CompanyListResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    post:
+      tags: [companies]
+      summary: Create a company
+      description: |
+        Creates a company with an optional logo. Sent as multipart/form-data because the
+        logo is a file. The supplied password is encrypted with Fernet before insert and
+        is never persisted or logged in plaintext (FR-009, FR-017).
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/CompanyWriteRequest'
+      responses:
+        '201':
+          description: Company created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Company'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          description: A company with this name already exists (case-insensitive)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: company_name_exists
+                message: A company with this name already exists.
+                details: null
+        '415':
+          description: Logo file type is not PNG, JPG, or SVG
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          description: Validation failed (missing name, negative/non-integer price, bad status)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '503':
+          description: Encryption key missing or malformed — nothing was written
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: encryption_unavailable
+                message: Server encryption key is not configured.
+                details: null
+
+  /api/admin/companies/{company_id}:
+    parameters:
+      - $ref: '#/components/parameters/CompanyId'
+    put:
+      tags: [companies]
+      summary: Update a company
+      description: |
+        Updates any of name, logo, password, price, and payment status. Fields that are
+        omitted are left unchanged; supplying a new logo replaces the old file
+        (deleting it best-effort). A new password is re-encrypted (FR-012).
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/CompanyWriteRequest'
+      responses:
+        '200':
+          description: Company updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Company'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: The new name collides with another company
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '415':
+          description: Logo file type is not PNG, JPG, or SVG
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          description: Validation failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    delete:
+      tags: [companies]
+      summary: Delete a company
+      description: |
+        Removes the company and revokes its access (FR-013). The stored logo file is
+        deleted best-effort after the row is removed.
+      responses:
+        '200':
+          description: Company deleted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeleteResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/admin/companies/{company_id}/password:
+    parameters:
+      - $ref: '#/components/parameters/CompanyId'
+    get:
+      tags: [companies]
+      summary: Reveal a company's password
+      description: |
+        Decrypts and returns the company's access password on demand so the admin can
+        copy and share it (FR-018). This is the only endpoint that ever returns
+        plaintext, and it is a distinct operation from the later company-login decryption.
+      responses:
+        '200':
+          description: Decrypted password
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CompanyPasswordResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '503':
+          description: Encryption key missing — the stored password cannot be decrypted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/admin/companies/{company_id}/logo:
+    parameters:
+      - $ref: '#/components/parameters/CompanyId'
+    get:
+      tags: [companies]
+      summary: Fetch a company's logo
+      description: |
+        Streams the stored logo image. Served with an explicit content type derived from
+        the validated extension, `X-Content-Type-Options: nosniff`, and
+        `Content-Disposition: inline` (research R7). The client renders it via `<img>`.
+      responses:
+        '200':
+          description: The logo image
+          content:
+            image/png:
+              schema:
+                type: string
+                format: binary
+            image/jpeg:
+              schema:
+                type: string
+                format: binary
+            image/svg+xml:
+              schema:
+                type: string
+                format: binary
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: Company not found, or it has no logo
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+components:
+  parameters:
+    CompanyId:
+      name: company_id
+      in: path
+      required: true
+      description: Company id (the string form of the CockroachDB SERIAL id)
+      schema:
+        type: string
+        example: "42"
+
+  responses:
+    Unauthorized:
+      description: Missing or invalid admin token
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error: unauthorized
+            message: Authentication required. Please sign in.
+            status_code: 401
+    NotFound:
+      description: Company not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error: company_not_found
+            message: Company not found.
+            details: null
+
+  schemas:
+    AdminLoginRequest:
+      type: object
+      required: [username, password]
+      properties:
+        username:
+          type: string
+          minLength: 1
+        password:
+          type: string
+          minLength: 1
+
+    AdminLoginResponse:
+      type: object
+      required: [token, expires_at]
+      properties:
+        token:
+          type: string
+          description: Admin JWT to send as `Authorization: Bearer <token>`
+        expires_at:
+          type: string
+          format: date-time
+          description: Token expiry (server-side backstop; the browser session ends on close)
+
+    PaymentStatus:
+      type: string
+      enum: [pending, free_trial, paid]
+      description: Rendered in the UI as Pending / Free Trial / Paid
+
+    CompanyWriteRequest:
+      type: object
+      required: [name, password, price_rupees]
+      properties:
+        name:
+          type: string
+          maxLength: 255
+          description: Required, unique case-insensitively
+        password:
+          type: string
+          description: Required. Generated client-side or typed manually; encrypted at rest
+        price_rupees:
+          type: integer
+          minimum: 0
+          description: Whole Rupees; stored only, never billed in this feature
+        payment_status:
+          $ref: '#/components/schemas/PaymentStatus'
+          default: pending
+        logo:
+          type: string
+          format: binary
+          description: Optional. PNG, JPG, or SVG. No size cap in this feature
+
+    Company:
+      type: object
+      required: [id, name, price_rupees, payment_status, has_password, logo_url, created_at, updated_at]
+      properties:
+        id:
+          type: string
+          description: String form of the SERIAL id (exceeds JS safe-integer range)
+        name:
+          type: string
+        logo_url:
+          type: [string, 'null']
+          description: Logo endpoint path, or null when no logo is set
+        has_password:
+          type: boolean
+          description: Signals a revealable password without shipping the secret
+        price_rupees:
+          type: integer
+          minimum: 0
+        payment_status:
+          $ref: '#/components/schemas/PaymentStatus'
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    CompanyListResponse:
+      type: object
+      required: [companies]
+      properties:
+        companies:
+          type: array
+          items:
+            $ref: '#/components/schemas/Company'
+
+    CompanyPasswordResponse:
+      type: object
+      required: [password]
+      properties:
+        password:
+          type: string
+          description: Decrypted on demand for reveal/copy
+
+    DeleteResponse:
+      type: object
+      required: [success, message]
+      properties:
+        success:
+          type: boolean
+        message:
+          type: string
+
+    ErrorResponse:
+      type: object
+      required: [error, message]
+      properties:
+        error:
+          type: string
+        message:
+          type: string
+        details:
+          type: [object, 'null']

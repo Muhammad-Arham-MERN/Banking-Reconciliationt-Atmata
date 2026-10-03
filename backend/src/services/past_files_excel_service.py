@@ -37,18 +37,19 @@ VENDOR_CATEGORIES = [
     "Vendor Credited But not Debited in Cashbook",
 ]
 
-# Settled sign convention: the wire value carries the pure source-specific
-# sign. The Excel Amount column is UNSIGNED; the sign is applied per section.
-#   Bank:      credit = +, debit = -
-#   Company:   credit = -, debit = +   (Unpresented = -, Uncleared = +)
-#   Vendor:    credit = -, debit = +   (source-side rows)
+# Settled, finalized sign convention (contracts/sign-convention.md §1/§2). The
+# Excel Amount column is UNSIGNED; the sign is applied per section so the stored
+# wire value carries the canonical sign:
+#   Bank:      debit = +, credit = -   (Bank Debited = +, Bank Credited = -)
+#   Company:   debit = +, credit = -   (Uncleared = +, Unpresented = -)
+#   Vendor:    debit = -, credit = +   (Vendor Credit = +, Vendor Debits = -)
 _SIGN_BY_CATEGORY = {
     "Unpresented Checks": -1.0,
     "Uncleared Checks": 1.0,
-    "Bank Debited But not Credited in Cashbook": -1.0,
-    "Bank Credited But not Debited in Cashbook": 1.0,
-    "Vendor Debited but not Credited in Cashbook": 1.0,
-    "Vendor Credited But not Debited in Cashbook": -1.0,
+    "Bank Debited But not Credited in Cashbook": 1.0,
+    "Bank Credited But not Debited in Cashbook": -1.0,
+    "Vendor Debited but not Credited in Cashbook": -1.0,
+    "Vendor Credited But not Debited in Cashbook": 1.0,
 }
 
 INSTRUCTIONS = [

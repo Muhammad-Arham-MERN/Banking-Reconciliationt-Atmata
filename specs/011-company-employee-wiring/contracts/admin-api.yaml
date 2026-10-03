@@ -1,0 +1,150 @@
+openapi: 3.0.1
+info:
+  title: Admin Dashboard API — additions
+  version: 1.0.0
+  description: >
+    Additions to the existing /api/admin surface (admin-JWT branch): the Company
+    Requests inbox (view-only), the per-company employee count on the companies
+    list, and the hover-modal roster. Existing login/companies/logo/password
+    endpoints are unchanged except for the added `employee_count` field.
+
+servers:
+  - url: http://localhost:8000
+
+security:
+  - adminBearer: []
+
+tags:
+  - name: company-requests
+  - name: companies
+
+paths:
+  /api/admin/company-requests:
+    get:
+      tags: [company-requests]
+      summary: List onboarding requests (view-only)
+      description: >
+        Newest first. Purely informational — requests never create, link to, or
+        modify a company account (FR-006).
+      responses:
+        '200':
+          description: The requests.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CompanyRequestListResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /api/admin/companies:
+    get:
+      tags: [companies]
+      summary: List companies (now with employee_count)
+      description: >
+        Same list as before, with `employee_count` added to each row (FR-018).
+      responses:
+        '200':
+          description: The companies.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  companies:
+                    type: array
+                    items: { $ref: '#/components/schemas/Company' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /api/admin/companies/{companyId}/employees:
+    get:
+      tags: [companies]
+      summary: List a company's employees (hover modal)
+      description: >
+        The roster shown when the Developer hovers a company's employee count
+        (FR-018). Includes name, employee id, status, and manager flag.
+      parameters:
+        - name: companyId
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        '200':
+          description: The company's employees.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EmployeeListResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+components:
+  securitySchemes:
+    adminBearer:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Admin session token from POST /api/admin/login.
+
+  responses:
+    Unauthorized:
+      description: Missing/invalid/expired admin token.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+
+  schemas:
+    Company:
+      type: object
+      description: Existing company payload plus employee_count.
+      properties:
+        id: { type: string }
+        name: { type: string }
+        logo_url: { type: string, nullable: true }
+        has_password: { type: boolean }
+        price_rupees: { type: integer }
+        payment_status: { type: string, enum: [pending, free_trial, paid] }
+        employee_count: { type: integer, minimum: 0 }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+      required: [id, name, employee_count]
+
+    AdminEmployee:
+      type: object
+      properties:
+        id: { type: string }
+        employee_name: { type: string }
+        employee_id: { type: string }
+        status: { type: string, enum: [pending, accepted, denied] }
+        is_manager: { type: boolean }
+      required: [id, employee_id, status, is_manager]
+
+    EmployeeListResponse:
+      type: object
+      properties:
+        employees:
+          type: array
+          items: { $ref: '#/components/schemas/AdminEmployee' }
+      required: [employees]
+
+    CompanyRequest:
+      type: object
+      properties:
+        id: { type: string }
+        company_name: { type: string }
+        role: { type: string }
+        website_socials: { type: string }
+        email: { type: string }
+        phone: { type: string }
+        submitted_at: { type: string, format: date-time }
+      required: [id, company_name, submitted_at]
+
+    CompanyRequestListResponse:
+      type: object
+      properties:
+        requests:
+          type: array
+          items: { $ref: '#/components/schemas/CompanyRequest' }
+      required: [requests]
+
+    Error:
+      type: object
+      properties:
+        error: { type: string }
+        message: { type: string }
+        details: { nullable: true }

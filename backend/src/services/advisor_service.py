@@ -63,8 +63,8 @@ action. You have no tools.
 You receive:
 1. The COMPLETE final discrepancies list. Each item has a stable key
    (discrepancy_id), Transaction_date, Transaction Detail, a signed
-   Debit/Credit (negative = debit, positive = credit), and a source FROM
-   (Bank or Company).
+   Debit/Credit (canonical convention: Company and Bank debit = +, credit = -;
+   Vendor debit = -, credit = +), and a source FROM (Bank or Company).
 2. Cumulative totals/balance context: running Bank-vs-Company balances over
    the list (points per item + final bank_balance / company_balance).
 
@@ -222,7 +222,8 @@ def _build_prompt(request: AdvisorReconcileRequest) -> str:
     lines = [
         "Here is the complete final discrepancies list for this reconciliation. "
         "Each item carries its stable key, date, details, signed amount "
-        "(negative = debit, positive = credit), and source (FROM):",
+        "(canonical convention: Company and Bank debit = +, credit = -; Vendor "
+        "debit = -, credit = +), and source (FROM):",
     ]
     for item in request.discrepancies:
         lines.append(

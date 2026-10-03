@@ -218,11 +218,12 @@ async def delete_reconciliation(user_id: int, file_id: int) -> str | None:
 
 # وَهُوَ عَلَى كُلِّ شَيْءٍ قَدِيرٌ
 async def save_reconciliation(
-    user_id: int, file_name: str, file_data: list[dict]
+    user_id: int, file_name: str, file_data: list[dict], reconciliation_type: str = "bank"
 ) -> None:
     """
     Upsert a reconciliation record and sync users.files for new records.
-    Uses raw asyncpg queries — no SQLModel dependency.
+    Uses raw asyncpg queries — no SQLModel dependency. Persists the ledger
+    type (bank/vendor) so a reloaded file keeps the correct category signs.
     """
     # Check if record exists for this user
     existing = await db_service.fetchrow(
@@ -231,17 +232,17 @@ async def save_reconciliation(
     )
 
     if existing:
-        # Upsert: update existing record's data
+        # Upsert: update existing record's data and ledger type
         await db_service.execute(
-            "UPDATE reconciliation_data SET data = $1 WHERE id = $2",
-            json.dumps(file_data), existing["id"],
+            "UPDATE reconciliation_data SET data = $1, reconciliation_type = $2 WHERE id = $3",
+            json.dumps(file_data), reconciliation_type, existing["id"],
         )
         logger.info("Upserted existing reconciliation record: %s", file_name)
     else:
         # Insert: create new record
         await db_service.execute(
-            "INSERT INTO reconciliation_data (file_name, data, user_id) VALUES ($1, $2::jsonb, $3)",
-            file_name, json.dumps(file_data), user_id,
+            "INSERT INTO reconciliation_data (file_name, data, user_id, reconciliation_type) VALUES ($1, $2::jsonb, $3, $4)",
+            file_name, json.dumps(file_data), user_id, reconciliation_type,
         )
         logger.info("Created new reconciliation record: %s", file_name)
 

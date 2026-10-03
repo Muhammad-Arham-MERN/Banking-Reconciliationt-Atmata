@@ -570,7 +570,8 @@ async def process_reconciliation(
             # Calculate discrepancy statistics
             bank_only_discrepancies = sum(1 for d in discrepancies if d.get('FROM') == 'Bank')
             company_only_discrepancies = sum(1 for d in discrepancies if d.get('FROM') == 'Company')
-            opposite_pairs_removed = (len(bank_transactions) + len(company_transactions) - len(discrepancies)) // 2
+            # Number of cross-source pairs cancelled by the matcher itself.
+            opposite_pairs_removed = reconciliation_service.matched_pairs_removed
 
             response = {
                 "request_id": request_id,

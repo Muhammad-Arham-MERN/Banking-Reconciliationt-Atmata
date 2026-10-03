@@ -9,6 +9,13 @@
 
 import { TransactionCategory } from '@/types/categorization.types';
 
+// NOTE (legacy data): reconciliations saved before this sign convention was
+// finalized were written with the OLD bank/vendor polarity (bank credit +/
+// debit -, vendor debit +/credit -). They are not backfilled — the original
+// source polarity cannot be reconstructed — so a legacy saved file/export
+// renders its stored values as-is; re-running the reconciliation regenerates it
+// under the finalized convention (contracts/sign-convention.md §5).
+
 // ============================================================================
 // CATEGORIZATION LOGIC
 // ============================================================================
@@ -17,19 +24,20 @@ import { TransactionCategory } from '@/types/categorization.types';
  * وَهُوَ عَلَى كُلِّ شَيْءٍ قَدِيرٌ
  * Categorize a transaction based on its source, value, and reconciliation type.
  *
- * The wire `Debit/Credit` value carries the pure source-specific convention
- * (no flips):
- *   - Bank:    Credit = positive, Debit = negative
- *   - Company: Credit = negative, Debit = positive
- *   - Vendor:  Credit = negative, Debit = positive
+ * Finalized canonical wire convention (contracts/sign-convention.md §2), with
+ * NO per-surface flips:
+ *   - Bank:    Debit = positive, Credit = negative
+ *   - Company: Debit = positive, Credit = negative
+ *   - Vendor:  Debit = negative, Credit = positive
+ * (source "Bank" carries the vendor ledger's rows in vendor mode.)
  *
  * Categorization:
- *   - Bank + (credit)      -> BANK_CREDITED_NOT_DEBITED
- *   - Bank - (debit)       -> BANK_DEBITED_NOT_CREDITED
+ *   - Bank + (debit)       -> BANK_DEBITED_NOT_CREDITED
+ *   - Bank - (credit)      -> BANK_CREDITED_NOT_DEBITED
  *   - Company - (credit)   -> UNPRESENTED_CHECKS
  *   - Company + (debit)    -> UNCLEARED_CHECKS
- *   - Vendor + (debit)     -> VENDOR_DEBITED_NOT_CREDITED
- *   - Vendor - (credit)    -> VENDOR_CREDITED_NOT_DEBITED
+ *   - Vendor + (credit)    -> VENDOR_CREDITED_NOT_DEBITED
+ *   - Vendor - (debit)     -> VENDOR_DEBITED_NOT_CREDITED
  *
  * @param source - The transaction source ('Bank' or 'Company')
  * @param value - The transaction value (source-specific signed amount)
@@ -45,16 +53,14 @@ export function categorizeTransaction(
   const isPositive = value > 0;
 
   if (reconciliationType === 'vendor') {
-    // Vendor ledger: Credit is -, Debit is + (its own convention, not a
-    // bank-statement inversion). A source-side entry that is positive =
-    // debited (money the vendor paid out / you owe) but not credited in the
-    // cash book; a negative one = credited (money the vendor received) but
-    // not debited.
+    // Vendor ledger: Credit is + and Debit is - (its own convention). A
+    // positive source-side entry = credited (money the vendor received) but
+    // not debited in the cash book; a negative one = debited but not credited.
     if (isSource && isPositive) {
-      return TransactionCategory.VENDOR_DEBITED_NOT_CREDITED;
+      return TransactionCategory.VENDOR_CREDITED_NOT_DEBITED;
     }
     if (isSource && !isPositive) {
-      return TransactionCategory.VENDOR_CREDITED_NOT_DEBITED;
+      return TransactionCategory.VENDOR_DEBITED_NOT_CREDITED;
     }
     if (!isSource && isPositive) {
       return TransactionCategory.UNCLEARED_CHECKS;
@@ -63,17 +69,17 @@ export function categorizeTransaction(
   }
 
   if (isSource && isPositive) {
-    // Bank credit (money in) — not recorded in company cash book
-    return TransactionCategory.BANK_CREDITED_NOT_DEBITED;
-  }
-  if (isSource && !isPositive) {
     // Bank debit (money out) — not recorded in company cash book
     return TransactionCategory.BANK_DEBITED_NOT_CREDITED;
+  }
+  if (isSource && !isPositive) {
+    // Bank credit (money in) — not recorded in company cash book
+    return TransactionCategory.BANK_CREDITED_NOT_DEBITED;
   }
   if (!isSource && isPositive) {
     return TransactionCategory.UNCLEARED_CHECKS;
   }
-  return TransactionCategory.UNPRESENTED_CHECKS;  // Company + Negative
+  return TransactionCategory.UNPRESENTED_CHECKS;  // Company credit (negative)
 }
 
 // ============================================================================
@@ -106,11 +112,12 @@ export function generateItemId(
 /**
  * Get the display amount for a transaction.
  *
- * The wire `Debit/Credit` value already carries the pure source-specific
- * convention end-to-end, with NO sign flips anywhere:
- *   - Bank:    Credit = positive, Debit = negative
- *   - Company: Credit = negative, Debit = positive
- *   - Vendor:  Credit = negative, Debit = positive
+ * The wire `Debit/Credit` value already carries the finalized canonical
+ * convention end-to-end, with NO sign flips anywhere
+ * (contracts/sign-convention.md §2):
+ *   - Bank:    Debit = positive, Credit = negative
+ *   - Company: Debit = positive, Credit = negative
+ *   - Vendor:  Debit = negative, Credit = positive
  * The display therefore shows the raw value as-is.
  *
  * @param source - The transaction source ('Bank' or 'Company')
@@ -129,8 +136,9 @@ export function getDisplayAmount(
 
 /**
  * Resolve the display label for a category under the active reconciliation
- * mode. In "vendor" mode the Bank-side categories are replaced with their
- * vendor equivalents (a vendor ledger has its own debit/credit convention).
+ * mode. In "vendor" mode the Bank-side category SLOTS are mapped to their
+ * vendor equivalents (a vendor ledger occupies the same credited/debited
+ * slots, though its debit/credit polarity is inverted).
  */
 export function categoryLabel(
   category: TransactionCategory,

@@ -24,6 +24,10 @@ export interface DiscrepancyTransaction {
   'Debit/Credit': number;
   'FROM': 'Bank' | 'Company';
   'from_past'?: boolean;
+  /** True when this row was injected by loading a past reconciliation file
+   *  (not by a manual "+" add). Such rows are replaced as a set when a
+   *  different past file is loaded, and cleared when "None" is chosen. */
+  from_past_file?: boolean;
   /** Stable backend-generated key (e.g. "Bank:1"), assigned during
    *  reconciliation (FR-002, AI Reconciler Advisor). Never rendered in the
    *  UI — used only for internal resolution/removal. */
@@ -37,7 +41,9 @@ export interface ReconciliationSummary {
   total_discrepancies: number;
   bank_only_discrepancies: number;
   company_only_discrepancies: number;
+  /** Cross-source pairs cancelled by the matcher (bank/vendor ↔ company). */
   opposite_pairs_removed: number;
+  /** Same-date opposite-sign pairs cancelled within a single source. */
   pair_mate_pairs_removed?: number;
   processing_duration_ms: number;
   pdf_processing_time_ms: number;

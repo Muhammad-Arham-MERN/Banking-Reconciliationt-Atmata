@@ -1,0 +1,312 @@
+/* بِسْمِ اللَّهِ الرَّحْمٰنِ الرَّحِيمِ */
+
+/* Bored Boss loadder — ported verbatim (SVG art + keyframes) from the
+   standalone frontend/boss-loader.html reference, which is removed after the
+   port. Pure CSS: no JS drives the animation. The parent picks one of three
+   modes — idle (pen tapping), handsUp (raised on "next"), smile (at the end).
+   The `--*` palette lives on the loader root so the component themes itself in
+   both light and dark without touching global tokens. */
+
+.bossLoader {
+  display: block;
+  width: 100%;
+  height: auto;
+  --boss-bg-1: #eef1f7;
+  --boss-bg-2: #dae2f1;
+  --boss-suit: #1e2a4a;
+  --boss-suit-2: #16203a;
+  --boss-skin: #eab189;
+  --boss-skin-2: #d1936a;
+  --boss-hair: #2b2434;
+  --boss-ink: #2b2434;
+  --boss-white: #f7f9fc;
+  --boss-accent: #6d5efc;
+  --boss-accent-2: #a78bfa;
+  --boss-table: #bb8a5c;
+  --boss-table-2: #926439;
+  --boss-shoe: #5c4030;
+  --boss-floor: #0b1020;
+}
+
+:global(.dark) .bossLoader {
+  --boss-bg-1: #0d1326;
+  --boss-bg-2: #182242;
+  --boss-suit: #2a3a66;
+  --boss-suit-2: #1c2748;
+  --boss-skin: #e3ab80;
+  --boss-skin-2: #c88d64;
+  --boss-hair: #4a4270;
+  --boss-ink: #131a2c;
+  --boss-white: #eef2fb;
+  --boss-accent: #8b7dff;
+  --boss-accent-2: #c4b5fd;
+  --boss-table: #9d7047;
+  --boss-table-2: #7a5433;
+  --boss-shoe: #6d4c38;
+  --boss-floor: #05070f;
+}
+
+/* --- palette hooks (CSS classes, because var() is not valid inside SVG
+   presentation attributes) ------------------------------------------------ */
+.blTable { fill: var(--boss-table); }
+.blTable2 { fill: var(--boss-table-2); }
+.blShoe { fill: var(--boss-shoe); }
+.blCrease { fill: url(#blCrease); }
+.blCrease1 { stop-color: #0b1020; stop-opacity: 0.34; }
+.blCrease2 { stop-color: #0b1020; stop-opacity: 0; }
+.blSuit { fill: var(--boss-suit); }
+.blSuit2 { fill: var(--boss-suit-2); }
+.blSkin { fill: var(--boss-skin); }
+.blSkin2 { fill: var(--boss-skin-2); }
+.blHair { fill: var(--boss-hair); }
+.blInk { fill: var(--boss-ink); }
+.blWhite { fill: var(--boss-white); }
+.blAccent { fill: var(--boss-accent); }
+.blAccent2 { fill: var(--boss-accent-2); }
+
+.blStrokeSuit {
+  fill: none;
+  stroke: var(--boss-suit);
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.blStrokeSuit2 {
+  fill: none;
+  stroke: var(--boss-suit-2);
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.blNose {
+  fill: none;
+  stroke: var(--boss-skin-2);
+  stroke-width: 3;
+  stroke-linecap: round;
+}
+.blMouth,
+.blSmile {
+  fill: none;
+  stroke: #c07a52;
+  stroke-width: 3.2;
+  stroke-linecap: round;
+}
+.blSmile { opacity: 0; }
+.blBrow {
+  fill: none;
+  stroke: var(--boss-hair);
+  stroke-width: 4.6;
+  stroke-linecap: round;
+}
+.blLid { fill: var(--boss-skin); }
+.blLash {
+  fill: none;
+  stroke: var(--boss-skin-2);
+  stroke-width: 2;
+  stroke-linecap: round;
+}
+.blEye { fill: var(--boss-white); }
+
+/* --- shared rig variables (viewBox coordinates) ------------------------- */
+.boss {
+  --sx: 370px;
+  --sy: 320px;
+  --nsx: -370px;
+  --nsy: -320px;
+  --ex: 426px;
+  --ey: 368px;
+  --nex: -426px;
+  --ney: -368px;
+  --wx: 452px;
+  --wy: 342px;
+  --nwx: -452px;
+  --nwy: -342px;
+  --tilt: translate(300px, 270px) rotate(-8deg) translate(-300px, -270px);
+}
+.eyeL { --cx: 276px; --cy: 196px; --ncx: -276px; --ncy: -196px; }
+.eyeR { --cx: 324px; --cy: 196px; --ncx: -324px; --ncy: -196px; }
+
+/* --- every animated part spins around its local origin ------------------ */
+.armUpper,
+.armFore,
+.armHand,
+.eye,
+.brow,
+.pupil,
+.ripple {
+  transform-origin: 0 0;
+}
+
+.armUpper,
+.armFore,
+.armHand {
+  will-change: transform;
+}
+
+/* --- eye / brow idle motion -------------------------------------------- */
+.eye { animation: blink 4.5s linear infinite; will-change: transform; }
+@keyframes blink {
+  0%, 39% { transform: var(--tilt) translate(var(--cx), var(--cy)) scaleY(1) translate(var(--ncx), var(--ncy)); }
+  41% { transform: var(--tilt) translate(var(--cx), var(--cy)) scaleY(0.06) translate(var(--ncx), var(--ncy)); }
+  43%, 56% { transform: var(--tilt) translate(var(--cx), var(--cy)) scaleY(1) translate(var(--ncx), var(--ncy)); }
+  77.78%, 89% { transform: var(--tilt) translate(var(--cx), var(--cy)) scaleY(1.14) translate(var(--ncx), var(--ncy)); }
+  100% { transform: var(--tilt) translate(var(--cx), var(--cy)) scaleY(1) translate(var(--ncx), var(--ncy)); }
+}
+.pupil { animation: pupilUp 4.5s cubic-bezier(0.25, 1, 0.5, 1) infinite; }
+@keyframes pupilUp {
+  0%, 56% { transform: translateY(0px); }
+  77.78%, 89% { transform: translateY(-3px); }
+  100% { transform: translateY(0px); }
+}
+.brow { animation: browUp 4.5s cubic-bezier(0.25, 1, 0.5, 1) infinite; }
+@keyframes browUp {
+  0%, 56% { transform: var(--tilt) translateY(0px); }
+  77.78%, 89% { transform: var(--tilt) translateY(-2.5px); }
+  100% { transform: var(--tilt) translateY(0px); }
+}
+
+/* --- intro "straight" pose -------------------------------------------------
+   At the very start he sits upright: the head group cancels the -8deg art
+   tilt, the cheek arm rests along the desk, and the pen arm parks at rest.
+   The transform on each is transitioned so the reveal (lifting the arm back to
+   his cheek while the form slides in) plays smoothly. */
+.headGroup,
+.blCheekArm {
+  transition: transform 0.7s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.modeStraight .headGroup {
+  /* Counter-rotate the baked-in -8deg so he faces straight ahead. */
+  transform: translate(300px, 270px) rotate(8deg) translate(-300px, -270px);
+}
+.modeStraight .blCheekArm {
+  /* Swing the forearm down around the elbow (202,370) so it lies on the desk
+     just above the desk edge (y ~= 373), staying visible in front of it. */
+  transform: translate(202px, 370px) rotate(58deg) translate(-202px, -370px);
+}
+.modeStraight .armUpper {
+  animation: none;
+  transform: translate(var(--sx), var(--sy)) rotate(0deg) translate(var(--nsx), var(--nsy));
+}
+.modeStraight .armFore {
+  animation: none;
+  transform: translate(var(--sx), var(--sy)) rotate(0deg) translate(var(--nsx), var(--nsy)) translate(var(--ex), var(--ey)) rotate(0deg) translate(var(--nex), var(--ney));
+}
+.modeStraight .armHand {
+  animation: none;
+  transform: translate(var(--sx), var(--sy)) rotate(0deg) translate(var(--nsx), var(--nsy)) translate(var(--ex), var(--ey)) rotate(0deg) translate(var(--nex), var(--ney)) translate(var(--wx), var(--wy)) rotate(0deg) translate(var(--nwx), var(--nwy));
+}
+.modeStraight .ripple {
+  animation: none;
+  opacity: 0;
+}
+
+/* --- mode: idle — four pen taps per cycle, arm never lifts -------------- */
+.modeIdle .armUpper {
+  animation: tapUpper 4.5s linear infinite;
+}
+.modeIdle .armFore {
+  animation: tapFore 4.5s linear infinite;
+}
+.modeIdle .armHand {
+  animation: tapHand 4.5s linear infinite;
+}
+
+@keyframes tapUpper {
+  0%, 100% { transform: translate(var(--sx), var(--sy)) rotate(0deg) translate(var(--nsx), var(--nsy)); }
+}
+@keyframes tapFore {
+  0% { transform: translate(var(--sx), var(--sy)) rotate(0deg) translate(var(--nsx), var(--nsy)) translate(var(--ex), var(--ey)) rotate(0deg) translate(var(--nex), var(--ney)); animation-timing-function: cubic-bezier(0.25, 1, 0.5, 1); }
+  2.5% { transform: translate(var(--sx), var(--sy)) rotate(0deg) translate(var(--nsx), var(--nsy)) translate(var(--ex), var(--ey)) rotate(-7deg) translate(var(--nex), var(--ney)); animation-timing-function: cubic-bezier(0.5, 0, 1, 0.55); }
+  8% { transform: translate(var(--sx), var(--sy)) rotate(0deg) translate(var(--nsx), var(--nsy)) translate(var(--ex), var(--ey)) rotate(1.5deg) translate(var(--nex), var(--ney)); animation-timing-function: ease-out; }
+  10% { transform: translate(var(--sx), var(--sy)) rotate(0deg) translate(var(--nsx), var(--nsy)) translate(var(--ex), var(--ey)) rotate(0deg) translate(var(--nex), var(--ney)); animation-timing-function: cubic-bezier(0.25, 1, 0.5, 1); }
+  16.39% { transform: translate(var(--sx), var(--sy)) rotate(0deg) translate(var(--nsx), var(--nsy)) translate(var(--ex), var(--ey)) rotate(-7deg) translate(var(--nex), var(--ney)); animation-timing-function: cubic-bezier(0.5, 0, 1, 0.55); }
+  21.89% { transform: translate(var(--sx), var(--sy)) rotate(0deg) translate(var(--nsx), var(--nsy)) translate(var(--ex), var(--ey)) rotate(1.5deg) translate(var(--nex), var(--ney)); animation-timing-function: ease-out; }
+  23.89% { transform: translate(var(--sx), var(--sy)) rotate(0deg) translate(var(--nsx), var(--nsy)) translate(var(--ex), var(--ey)) rotate(0deg) translate(var(--nex), var(--ney)); animation-timing-function: cubic-bezier(0.25, 1, 0.5, 1); }
+  30.28% { transform: translate(var(--sx), var(--sy)) rotate(0deg) translate(var(--nsx), var(--nsy)) translate(var(--ex), var(--ey)) rotate(-7deg) translate(var(--nex), var(--ney)); animation-timing-function: cubic-bezier(0.5, 0, 1, 0.55); }
+  35.78% { transform: translate(var(--sx), var(--sy)) rotate(0deg) translate(var(--nsx), var(--nsy)) translate(var(--ex), var(--ey)) rotate(1.5deg) translate(var(--nex), var(--ney)); animation-timing-function: ease-out; }
+  37.78% { transform: translate(var(--sx), var(--sy)) rotate(0deg) translate(var(--nsx), var(--nsy)) translate(var(--ex), var(--ey)) rotate(0deg) translate(var(--nex), var(--ney)); animation-timing-function: cubic-bezier(0.25, 1, 0.5, 1); }
+  44.17% { transform: translate(var(--sx), var(--sy)) rotate(0deg) translate(var(--nsx), var(--nsy)) translate(var(--ex), var(--ey)) rotate(-7deg) translate(var(--nex), var(--ney)); animation-timing-function: cubic-bezier(0.5, 0, 1, 0.55); }
+  49.67% { transform: translate(var(--sx), var(--sy)) rotate(0deg) translate(var(--nsx), var(--nsy)) translate(var(--ex), var(--ey)) rotate(1.5deg) translate(var(--nex), var(--ney)); animation-timing-function: ease-out; }
+  51.67%, 100% { transform: translate(var(--sx), var(--sy)) rotate(0deg) translate(var(--nsx), var(--nsy)) translate(var(--ex), var(--ey)) rotate(0deg) translate(var(--nex), var(--ney)); }
+}
+@keyframes tapHand {
+  0% { transform: translate(var(--sx), var(--sy)) rotate(0deg) translate(var(--nsx), var(--nsy)) translate(var(--ex), var(--ey)) rotate(0deg) translate(var(--nex), var(--ney)) translate(var(--wx), var(--wy)) rotate(0deg) translate(var(--nwx), var(--nwy)); animation-timing-function: cubic-bezier(0.25, 1, 0.5, 1); }
+  2.5% { transform: translate(var(--sx), var(--sy)) rotate(0deg) translate(var(--nsx), var(--nsy)) translate(var(--ex), var(--ey)) rotate(-7deg) translate(var(--nex), var(--ney)) translate(var(--wx), var(--wy)) rotate(0deg) translate(var(--nwx), var(--nwy)); animation-timing-function: cubic-bezier(0.5, 0, 1, 0.55); }
+  8% { transform: translate(var(--sx), var(--sy)) rotate(0deg) translate(var(--nsx), var(--nsy)) translate(var(--ex), var(--ey)) rotate(1.5deg) translate(var(--nex), var(--ney)) translate(var(--wx), var(--wy)) rotate(0deg) translate(var(--nwx), var(--nwy)); animation-timing-function: ease-out; }
+  10% { transform: translate(var(--sx), var(--sy)) rotate(0deg) translate(var(--nsx), var(--nsy)) translate(var(--ex), var(--ey)) rotate(0deg) translate(var(--nex), var(--ney)) translate(var(--wx), var(--wy)) rotate(0deg) translate(var(--nwx), var(--nwy)); animation-timing-function: cubic-bezier(0.25, 1, 0.5, 1); }
+  16.39% { transform: translate(var(--sx), var(--sy)) rotate(0deg) translate(var(--nsx), var(--nsy)) translate(var(--ex), var(--ey)) rotate(-7deg) translate(var(--nex), var(--ney)) translate(var(--wx), var(--wy)) rotate(0deg) translate(var(--nwx), var(--nwy)); animation-timing-function: cubic-bezier(0.5, 0, 1, 0.55); }
+  21.89% { transform: translate(var(--sx), var(--sy)) rotate(0deg) translate(var(--nsx), var(--nsy)) translate(var(--ex), var(--ey)) rotate(1.5deg) translate(var(--nex), var(--ney)) translate(var(--wx), var(--wy)) rotate(0deg) translate(var(--nwx), var(--nwy)); animation-timing-function: ease-out; }
+  23.89% { transform: translate(var(--sx), var(--sy)) rotate(0deg) translate(var(--nsx), var(--nsy)) translate(var(--ex), var(--ey)) rotate(0deg) translate(var(--nex), var(--ney)) translate(var(--wx), var(--wy)) rotate(0deg) translate(var(--nwx), var(--nwy)); animation-timing-function: cubic-bezier(0.25, 1, 0.5, 1); }
+  30.28% { transform: translate(var(--sx), var(--sy)) rotate(0deg) translate(var(--nsx), var(--nsy)) translate(var(--ex), var(--ey)) rotate(-7deg) translate(var(--nex), var(--ney)) translate(var(--wx), var(--wy)) rotate(0deg) translate(var(--nwx), var(--nwy)); animation-timing-function: cubic-bezier(0.5, 0, 1, 0.55); }
+  35.78% { transform: translate(var(--sx), var(--sy)) rotate(0deg) translate(var(--nsx), var(--nsy)) translate(var(--ex), var(--ey)) rotate(1.5deg) translate(var(--nex), var(--ney)) translate(var(--wx), var(--wy)) rotate(0deg) translate(var(--nwx), var(--nwy)); animation-timing-function: ease-out; }
+  37.78% { transform: translate(var(--sx), var(--sy)) rotate(0deg) translate(var(--nsx), var(--nsy)) translate(var(--ex), var(--ey)) rotate(0deg) translate(var(--nex), var(--ney)) translate(var(--wx), var(--wy)) rotate(0deg) translate(var(--nwx), var(--nwy)); animation-timing-function: cubic-bezier(0.25, 1, 0.5, 1); }
+  44.17% { transform: translate(var(--sx), var(--sy)) rotate(0deg) translate(var(--nsx), var(--nsy)) translate(var(--ex), var(--ey)) rotate(-7deg) translate(var(--nex), var(--ney)) translate(var(--wx), var(--wy)) rotate(0deg) translate(var(--nwx), var(--nwy)); animation-timing-function: cubic-bezier(0.5, 0, 1, 0.55); }
+  49.67% { transform: translate(var(--sx), var(--sy)) rotate(0deg) translate(var(--nsx), var(--nsy)) translate(var(--ex), var(--ey)) rotate(1.5deg) translate(var(--nex), var(--ney)) translate(var(--wx), var(--wy)) rotate(0deg) translate(var(--nwx), var(--nwy)); animation-timing-function: ease-out; }
+  51.67%, 100% { transform: translate(var(--sx), var(--sy)) rotate(0deg) translate(var(--nsx), var(--nsy)) translate(var(--ex), var(--ey)) rotate(0deg) translate(var(--nex), var(--ney)) translate(var(--wx), var(--wy)) rotate(0deg) translate(var(--nwx), var(--nwy)); }
+}
+
+/* --- mode: handsUp — raise the arm and pen, one shot, then hold ---------- */
+.modeHandsUp .armUpper {
+  animation: liftUpper 0.55s cubic-bezier(0.25, 1, 0.5, 1) 1 forwards;
+}
+.modeHandsUp .armFore {
+  animation: liftFore 0.55s cubic-bezier(0.25, 1, 0.5, 1) 1 forwards;
+}
+.modeHandsUp .armHand {
+  animation: liftHand 0.55s cubic-bezier(0.25, 1, 0.5, 1) 1 forwards;
+}
+@keyframes liftUpper {
+  from { transform: translate(var(--sx), var(--sy)) rotate(0deg) translate(var(--nsx), var(--nsy)); }
+  to { transform: translate(var(--sx), var(--sy)) rotate(-93deg) translate(var(--nsx), var(--nsy)); }
+}
+@keyframes liftFore {
+  from { transform: translate(var(--sx), var(--sy)) rotate(0deg) translate(var(--nsx), var(--nsy)) translate(var(--ex), var(--ey)) rotate(0deg) translate(var(--nex), var(--ney)); }
+  to { transform: translate(var(--sx), var(--sy)) rotate(-93deg) translate(var(--nsx), var(--nsy)) translate(var(--ex), var(--ey)) rotate(0deg) translate(var(--nex), var(--ney)); }
+}
+@keyframes liftHand {
+  from { transform: translate(var(--sx), var(--sy)) rotate(0deg) translate(var(--nsx), var(--nsy)) translate(var(--ex), var(--ey)) rotate(0deg) translate(var(--nex), var(--ney)) translate(var(--wx), var(--wy)) rotate(0deg) translate(var(--nwx), var(--nwy)); }
+  to { transform: translate(var(--sx), var(--sy)) rotate(-93deg) translate(var(--nsx), var(--nsy)) translate(var(--ex), var(--ey)) rotate(0deg) translate(var(--nex), var(--ney)) translate(var(--wx), var(--wy)) rotate(-64deg) translate(var(--nwx), var(--nwy)); }
+}
+
+/* --- mode: smile — the final pose swaps the mouth ---------------------- */
+.modeSmile .blMouth { opacity: 0; }
+.modeSmile .blSmile { opacity: 1; }
+
+/* --- tap ripples fire on each pen strike -------------------------------- */
+.ripple {
+  fill: none;
+  stroke: var(--boss-accent);
+  stroke-width: 2.4;
+  opacity: 0;
+  animation: ripple 4.5s linear infinite;
+}
+@keyframes ripple {
+  0% { opacity: 0; transform: translate(469.5px, 384px) scale(0.35) translate(-469.5px, -384px); }
+  1.5% { opacity: 0.65; transform: translate(469.5px, 384px) scale(0.7) translate(-469.5px, -384px); }
+  7% { opacity: 0; transform: translate(469.5px, 384px) scale(1.5) translate(-469.5px, -384px); }
+  100% { opacity: 0; transform: translate(469.5px, 384px) scale(1.5) translate(-469.5px, -384px); }
+}
+.r1 { animation-delay: 0.36s; }
+.r2 { animation-delay: 0.985s; }
+.r3 { animation-delay: 1.61s; }
+.r4 { animation-delay: 2.235s; }
+
+/* --- accessibility: honour reduced motion by parking a readable pose ---- */
+@media (prefers-reduced-motion: reduce) {
+  .armUpper,
+  .armFore,
+  .armHand,
+  .eye,
+  .pupil,
+  .brow,
+  .ripple {
+    animation: none;
+  }
+  .blMouth { opacity: 1; }
+  .blSmile { opacity: 0; }
+  .eye,
+  .brow {
+    transform: var(--tilt);
+  }
+}
+
+/* وَإِنَّ اللَّهَ لَهُوَ خَيْرُ الرَّازِقِينَ */

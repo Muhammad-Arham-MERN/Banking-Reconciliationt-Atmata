@@ -1,0 +1,188 @@
+openapi: 3.0.1
+info:
+  title: Company Dashboard API (company-JWT branch)
+  version: 1.0.0
+  description: >
+    Company-facing employee management for the Company Dashboard. Every path here
+    is gated by the company-JWT branch of auth_middleware; the company identity is
+    taken from the token (request.state.company_id), never from the request body.
+    The company session is obtained from POST /api/company/login (24h, company JWT).
+
+servers:
+  - url: http://localhost:8000
+
+security:
+  - companyBearer: []
+
+tags:
+  - name: employees
+  - name: logo
+
+paths:
+  /api/company/employees:
+    get:
+      tags: [employees]
+      summary: List this company's employee requests
+      description: >
+        Returns every employee record for the signed-in company, newest first.
+        Supports the dashboard's automatic ID/name search via the optional `q`
+        parameter (case-insensitive; the frontend additionally ranks ID matches
+        above name-only matches client-side).
+      parameters:
+        - name: q
+          in: query
+          required: false
+          schema: { type: string }
+          description: Optional search text matched against employee_id and employee_name.
+      responses:
+        '200':
+          description: The company's employees.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EmployeeListResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /api/company/employees/{employeeId}/grant:
+    post:
+      tags: [employees]
+      summary: Grant access to an employee request
+      description: >
+        Sets the employee's status to `accepted`, which enables the specific
+        signed-in account bound to the record to use the application (FR-003).
+      parameters: [{ $ref: '#/components/parameters/EmployeeId' }]
+      responses:
+        '200':
+          description: The updated employee.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Employee' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /api/company/employees/{employeeId}:
+    patch:
+      tags: [employees]
+      summary: Assign or remove the Manager role
+      description: >
+        Toggles `is_manager` for the employee (FR-019). Any caller with dashboard
+        access (the company account or an existing Manager) may do this.
+      parameters: [{ $ref: '#/components/parameters/EmployeeId' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [is_manager]
+              properties:
+                is_manager: { type: boolean }
+      responses:
+        '200':
+          description: The updated employee.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Employee' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    delete:
+      tags: [employees]
+      summary: Delete an employee request (revokes any granted access)
+      description: >
+        Removes the employee record from the company's records and revokes access
+        (FR-004). The employee's signed-in account is untouched.
+      parameters: [{ $ref: '#/components/parameters/EmployeeId' }]
+      responses:
+        '200':
+          description: Deleted.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DeleteResponse' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /api/company/{companyId}/logo:
+    get:
+      tags: [logo]
+      summary: Stream the signed-in company's logo
+      description: >
+        Fixes the dangling logo_url returned by the company login. Requires the
+        company JWT (a company principal has no NextAuth token, so the employee/admin
+        logo endpoints are not reachable from the dashboard).
+      parameters:
+        - name: companyId
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        '200':
+          description: The logo image.
+          content:
+            image/png: { schema: { type: string, format: binary } }
+            image/jpeg: { schema: { type: string, format: binary } }
+            image/svg+xml: { schema: { type: string, format: binary } }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+components:
+  securitySchemes:
+    companyBearer:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Company session token from POST /api/company/login.
+
+  parameters:
+    EmployeeId:
+      name: employeeId
+      in: path
+      required: true
+      schema: { type: string }
+      description: The employee record's id (stringified SERIAL).
+
+  responses:
+    Unauthorized:
+      description: Missing/invalid/expired company token.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    NotFound:
+      description: No such employee for this company.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+
+  schemas:
+    Employee:
+      type: object
+      properties:
+        id: { type: string }
+        employee_name: { type: string }
+        employee_id: { type: string, example: adam-7f3k92qz }
+        company_id: { type: string }
+        company_name: { type: string }
+        account_email: { type: string }
+        status: { type: string, enum: [pending, accepted, denied] }
+        is_manager: { type: boolean }
+        created_at: { type: string, format: date-time }
+      required: [id, employee_name, employee_id, company_id, company_name, status, is_manager]
+
+    EmployeeListResponse:
+      type: object
+      properties:
+        employees:
+          type: array
+          items: { $ref: '#/components/schemas/Employee' }
+      required: [employees]
+
+    DeleteResponse:
+      type: object
+      properties:
+        success: { type: boolean }
+        message: { type: string }
+
+    Error:
+      type: object
+      properties:
+        error: { type: string }
+        message: { type: string }
+        details: { nullable: true }

@@ -64,7 +64,9 @@ async def save_cloud_data(
 ):
     """Save or overwrite reconciliation data for the authenticated user."""
     user_id = request.state.user_id
-    await save_reconciliation(user_id, body.file_name, body.file_data)
+    await save_reconciliation(
+        user_id, body.file_name, body.file_data, body.reconciliation_type
+    )
     return SaveSuccessResponse(file_name=body.file_name)
 
 

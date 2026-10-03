@@ -13,6 +13,7 @@ import { useMemo } from 'react';
 import { NetTotalValue, DiscrepancyTransaction } from '@/types/reconciliation.types';
 import { TransactionCategory } from '@/types/categorization.types';
 import { categorizeTransaction, formatAmount } from '@/lib/utils/categorizationUtils';
+import { useReconciliationType } from '@/components/providers/reconciliation-type-provider';
 import {
   Card,
   CardContent,
@@ -36,23 +37,34 @@ interface ReconciliationTotalsProps {
 function useTotalsCalculation(
   bankNetTotal: NetTotalValue | undefined,
   companyNetTotal: NetTotalValue | undefined,
-  discrepancies: DiscrepancyTransaction[]
+  discrepancies: DiscrepancyTransaction[],
+  reconciliationType: 'bank' | 'vendor'
 ) {
   return useMemo(() => {
-    // Sum discrepancy amounts by category using RAW signed values
-    // Raw values already have correct sign: positive=credit, negative=debit
-    // Adding a signed value naturally handles add (positive) / subtract (negative)
+    // Sum discrepancy amounts by category using the raw canonical signs
+    // (contracts/sign-convention.md §1): Company/Bank debit +, credit -;
+    // Vendor debit -, credit +. A signed value adds (positive) / subtracts
+    // (negative) naturally. Vendor slots fold into the bank slots so the
+    // adjusted-total math below stays the same in both modes.
     const categorySums: Record<string, number> = {
       [TransactionCategory.UNCLEARED_CHECKS]: 0,
       [TransactionCategory.UNPRESENTED_CHECKS]: 0,
       [TransactionCategory.BANK_DEBITED_NOT_CREDITED]: 0,
       [TransactionCategory.BANK_CREDITED_NOT_DEBITED]: 0,
+      [TransactionCategory.VENDOR_DEBITED_NOT_CREDITED]: 0,
+      [TransactionCategory.VENDOR_CREDITED_NOT_DEBITED]: 0,
     };
 
     for (const d of discrepancies) {
-      const category = categorizeTransaction(d.FROM, d['Debit/Credit']);
+      const category = categorizeTransaction(d.FROM, d['Debit/Credit'], reconciliationType);
+      const slot =
+        category === TransactionCategory.VENDOR_DEBITED_NOT_CREDITED
+          ? TransactionCategory.BANK_DEBITED_NOT_CREDITED
+          : category === TransactionCategory.VENDOR_CREDITED_NOT_DEBITED
+          ? TransactionCategory.BANK_CREDITED_NOT_DEBITED
+          : category;
       // Use raw signed value — positive adds, negative subtracts
-      categorySums[category] = (categorySums[category] || 0) + d['Debit/Credit'];
+      categorySums[slot] = (categorySums[slot] || 0) + d['Debit/Credit'];
     }
 
     // Raw totals
@@ -66,20 +78,23 @@ function useTotalsCalculation(
     const bankCreditedNotDebited = categorySums[TransactionCategory.BANK_CREDITED_NOT_DEBITED] || 0;
     const bankDebitedNotCredited = categorySums[TransactionCategory.BANK_DEBITED_NOT_CREDITED] || 0;
 
-    // DISPLAY adjustments. The raw wire values already carry the pure
-    // source-specific convention (no flips):
-    //   - Unpresented Checks (Company credit):  negative
-    //   - Uncleared Checks (Company debit):     positive
-    //   - Bank Credited Not Debited:            positive (Bank credit = +)
-    //   - Bank Debited Not Credited:            negative (Bank debit = -)
+    // DISPLAY adjustments use the finalized canonical signs
+    // (contracts/sign-convention.md §1):
+    //   - Unpresented Checks (Company credit):     negative
+    //   - Uncleared Checks (Company debit):        positive
+    //   - Bank Debited Not Credited (Bank debit):  positive
+    //   - Bank Credited Not Debited (Bank credit): negative
     const displayUnclearedChecks = unclearedChecks;
     const displayUnpresentedChecks = unpresentedChecks;
     const displayBankCreditedNotDebited = bankCreditedNotDebited;
     const displayBankDebitedNotCredited = bankDebitedNotCredited;
 
-    // Adjusted totals: add signed values (positive→add, negative→subtract)
+    // Adjusted totals (accounting identity, expressed with the canonical
+    // signs): the bank balance is adjusted by the company-side timing items,
+    // and the company book by the bank-only items. A bank credit not yet in the
+    // cash book is now NEGATIVE, so it is subtracted rather than added.
     const adjustedBank = bankRaw !== null ? bankRaw + unclearedChecks + unpresentedChecks : null;
-    const adjustedCompany = companyRaw !== null ? companyRaw + bankCreditedNotDebited + bankDebitedNotCredited : null;
+    const adjustedCompany = companyRaw !== null ? companyRaw - bankCreditedNotDebited - bankDebitedNotCredited : null;
 
     // Verdict
     let isBalanced: boolean | null = null;
@@ -113,7 +128,7 @@ function useTotalsCalculation(
       bankStatus: bankNetTotal?.status,
       companyStatus: companyNetTotal?.status,
     };
-  }, [bankNetTotal, companyNetTotal, discrepancies]);
+  }, [bankNetTotal, companyNetTotal, discrepancies, reconciliationType]);
 }
 
 function StatusBadge({ status }: { status: string | undefined }) {
@@ -138,7 +153,8 @@ export function ReconciliationTotals({
   companyNetTotal,
   discrepancies,
 }: ReconciliationTotalsProps) {
-  const calc = useTotalsCalculation(bankNetTotal, companyNetTotal, discrepancies);
+  const { reconciliationType } = useReconciliationType();
+  const calc = useTotalsCalculation(bankNetTotal, companyNetTotal, discrepancies, reconciliationType);
 
   return (
     <Card>
@@ -234,7 +250,7 @@ export function ReconciliationTotals({
               </div>
             </div>
 
-            {/* Company adjustments: Bank credited not debited (negative→subtract), Bank debited not credited (positive→add) */}
+            {/* Company adjustments: Bank debited not credited (positive→add), Bank credited not debited (negative→subtract) */}
             <div className="space-y-1">
               <p className="text-xs font-medium text-muted-foreground">Company Net Total Adjustments</p>
               <div className="space-y-1 text-sm">

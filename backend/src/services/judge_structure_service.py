@@ -49,6 +49,16 @@ JUDGE_FIRST_LINES = 10
 KNOWN_ENTITY_PREFIX = "KNOWN_ENTITY"
 NO_DATA = "NO_DATA"
 
+# Markers the Judge must embed in its final output so the system can tell,
+# deterministically, whether a usable structure was found (without parsing the
+# prose the main agent reads). Dune code words (taste):
+#   - LISANALGHAIB ("voice from the outer world"): a known structure WAS found
+#     and returned - it guides the unknown to a structure.
+#   - SHAIHULUD (the sandworm / "the big worm"): NO usable structure found -
+#     the main agent must capture this big PDF itself, from scratch.
+MARKER_KNOWN = "LISANALGHAIB"
+MARKER_UNKNOWN = "SHAIHULUD"
+
 
 # وَهُوَ عَلَى كُلِّ شَيْءٍ قَدِيرٌ
 def _run_async(coro_factory):
@@ -114,9 +124,10 @@ Steps:
 MATCHING IS CONTEXTUAL, NOT LITERAL: the known-entities list and the name you read from the PDF may differ in spelling, punctuation, or wording (e.g. "Askari Bank" vs "Askar Bank", "Meezan Bank Ltd." vs "Meezan Bank", "Faisal Cement" vs "Faisal Cement Co."). Decide by CONTEXTUAL RELEVANCE - is this list entry clearly the same bank/vendor as the PDF's? When you decide yes, fetch the full structure using the EXACT stored name as it appears in the list (lookup_pdf_structures takes the stored name), NOT the spelling you read from the PDF.
 
 OUTPUT RULES:
-- KNOWN: return the full structure JSON exactly as lookup_pdf_structures returned it, prefixed with "KNOWN_ENTITY <stored name>:".
-- UNKNOWN/UNIDENTIFIABLE: return exactly "NO_DATA" followed by a one-line reason.
-- Nothing before/after. No prose."""
+- KNOWN: return the full structure JSON exactly as lookup_pdf_structures returned it, prefixed with "KNOWN_ENTITY <stored name>:", and include the marker "LISANALGHAIB" somewhere in your final output.
+- UNKNOWN/UNIDENTIFIABLE: return exactly "NO_DATA" followed by a one-line reason, and include the marker "SHAIHULUD" somewhere in your final output.
+- The markers are code words that tell the system whether you found a usable structure; keep them inside your normal output (the prose/JSON the main agent reads) - do not treat them as a substitute for the content above.
+- Nothing before/after. No extra prose."""
 
 
 # وَهُوَ عَلَى كُلِّ شَيْءٍ قَدِيرٌ
@@ -223,6 +234,7 @@ def build_judge_tool(
     pdf_path: Path,
     reconciliation_type: str = "bank",
     request_id: Optional[str] = None,
+    state_holder: Optional[dict] = None,
 ):
     """Build the Judge as an agent-as-tool for the main extraction agent.
 
@@ -232,12 +244,82 @@ def build_judge_tool(
     falls back to full detection (Path B). Fail-open: if the nested run raises,
     the SDK returns the error as the tool result and AGENT_INSTRUCTIONS tell the
     main agent to proceed with full detection.
+
+    Live-progress "naughty event sending": a custom_output_extractor
+    INTERCEPTS the judge's final output to send an event, then returns the
+    output UNCHANGED to the main agent. The judge's verdict is inferred two
+    ways (never from its prose):
+      1. The Dune markers the judge is instructed to embed: LISANALGHAIB
+         (known structure found -> positive, it speeds up the whole flow) or
+         SHAIHULUD (nothing found -> neutral, detect from scratch).
+      2. Fallback to the deterministic KNOWN_ENTITY / NO_DATA prefix, which
+         rescues the case where the LLM forgot the marker word.
+    The found/not-found verdict is also recorded on state_holder so the
+    assess_structure tool can emit its "re-validating a known structure" event
+    on top of its own later.
     """
     judge_agent = build_judge_agent(
         pdf_path,
         reconciliation_type=reconciliation_type,
         request_id=request_id,
     )
+
+    async def _extract_and_report(run_result) -> str:
+        # Pull the judge's final output. The SDK's default is the nested run's
+        # final_output; fall back to the last message item when it's empty.
+        final_output = str(getattr(run_result, "final_output", "") or "").strip()
+        if not final_output:
+            try:
+                from agents.items import ItemHelpers, MessageOutputItem
+
+                for item in reversed(run_result.new_items):
+                    if isinstance(item, MessageOutputItem):
+                        text = ItemHelpers.text_message_output(item)
+                        if text:
+                            final_output = text.strip()
+                            break
+            except Exception:
+                pass
+
+        found = MARKER_KNOWN in final_output or final_output.startswith(KNOWN_ENTITY_PREFIX)
+        empty = MARKER_UNKNOWN in final_output or final_output.startswith(NO_DATA)
+
+        if found:
+            if state_holder is not None:
+                state_holder["judge_found_structure"] = True
+            if request_id:
+                from src.services import progress_events
+
+                progress_events.emit_stage(
+                    request_id,
+                    "history_found",
+                    "Found something that can help us",
+                    "positive",  # a known structure short-circuits full detection
+                    "📚",
+                    5,
+                )
+        elif empty:
+            if state_holder is not None:
+                state_holder["judge_found_structure"] = False
+            if request_id:
+                from src.services import progress_events
+
+                progress_events.emit_stage(
+                    request_id,
+                    "history_empty",
+                    "Nothing Useful Found, Starting From Scratch",
+                    "neutral",
+                    "🧭",
+                    0,
+                )
+        # Neither marker nor sentinel present (LLM forgot the words) -> emit no
+        # history event; the assess_structure stage is the safety net. The
+        # output is ALWAYS passed through unchanged regardless.
+
+        # IMPORTANT: always return the judge's exact output - we only
+        # intercepted to send events; the main agent reads this verbatim.
+        return final_output or "NO_DATA"
+
     return judge_agent.as_tool(
         tool_name="judge_structure_by_cover",
         tool_description=(
@@ -248,6 +330,7 @@ def build_judge_tool(
             "(re-validate it against THIS file with assess_structure), or "
             "'NO_DATA' (unknown/new entity - detect the structure from scratch)."
         ),
+        custom_output_extractor=_extract_and_report,
         max_turns=JUDGE_MAX_TURNS,
     )
 

@@ -34,16 +34,16 @@ export enum TransactionCategory {
   /** Company records with positive values (Company debit) - checks received but not yet cleared */
   UNCLEARED_CHECKS = "UNCLEARED CHECKS",
 
-  /** Bank statement entries with positive values (credit, money in) - not recorded in company cash book */
+  /** Bank statement credits (negative under the finalized convention) - not recorded in company cash book */
   BANK_CREDITED_NOT_DEBITED = "BANK CREDITED BUT NOT DEBITED IN CASH BOOK",
 
-  /** Bank statement entries with negative values (debit, money out) - not recorded in company cash book */
+  /** Bank statement debits (positive under the finalized convention) - not recorded in company cash book */
   BANK_DEBITED_NOT_CREDITED = "BANK DEBITED BUT NOT CREDITED IN CASH BOOK",
 
-  /** Vendor ledger entries with negative values (vendor credit) - not recorded in company cash book */
+  /** Vendor ledger credits (positive under the finalized convention) - not recorded in company cash book */
   VENDOR_CREDITED_NOT_DEBITED = "VENDOR CREDITED BUT NOT DEBITED IN CASH BOOK",
 
-  /** Vendor ledger entries with positive values (vendor debit) - not recorded in company cash book */
+  /** Vendor ledger debits (negative under the finalized convention) - not recorded in company cash book */
   VENDOR_DEBITED_NOT_CREDITED = "VENDOR DEBITED BUT NOT CREDITED IN CASH BOOK"
 }
 
@@ -62,7 +62,7 @@ export interface CategorizedTransaction extends DiscrepancyTransaction {
   /** Transaction description/details */
   'Transaction Detail': string;
 
-  /** Raw amount with the pure source-specific sign (Bank: credit +/debit -; Company: credit -/debit +) */
+  /** Raw amount with the finalized canonical sign (Bank: debit +/credit -; Company: debit +/credit -; Vendor: credit +/debit -) */
   'Debit/Credit': number;
 
   /** Source identifier: 'Bank' or 'Company' */

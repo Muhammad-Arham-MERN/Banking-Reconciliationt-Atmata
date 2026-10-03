@@ -1,3 +1,4 @@
+/* بِسْمِ اللَّهِ الرَّحْمٰنِ الرَّحِيمِ */
 'use client';
 
 import { useState, useCallback, useMemo, useRef, useEffect } from 'react';
@@ -96,21 +97,24 @@ function statusVariant(status: ReconciliationResult['processing_status']) {
 }
 
 // Helper: determine category from source, amount, and reconciliation mode.
-// Wire values carry the pure source-specific convention (no flips):
-//   Bank:    credit = +, debit = -
-//   Company: credit = -, debit = +  (Unpresented = -, Uncleared = +)
-//   Vendor:  credit = -, debit = +  (source-side rows)
+// Finalized canonical wire convention (contracts/sign-convention.md §2), no flips:
+//   Bank:    debit = +, credit = -
+//   Company: debit = +, credit = -  (Unpresented = -, Uncleared = +)
+//   Vendor:  debit = -, credit = +  (source-side rows)
+// The sign predicates mirror categorizationUtils.categorizeTransaction; this
+// returns the PERSISTED title-case label the backend keys its past-file Excel
+// sign map on (past_files_excel_service._SIGN_BY_CATEGORY), so keep the two in sync.
 function categorizeDiscrepancy(from: string, amount: number, mode: 'bank' | 'vendor' = 'bank'): string {
   if (mode === 'vendor') {
     if (from === 'Company' && amount < 0) return 'Unpresented Checks';
     if (from === 'Company' && amount >= 0) return 'Uncleared Checks';
-    if (from === 'Bank' && amount >= 0) return 'Vendor Debited but not Credited in Cashbook';
-    return 'Vendor Credited But not Debited in Cashbook';
+    if (from === 'Bank' && amount >= 0) return 'Vendor Credited But not Debited in Cashbook';
+    return 'Vendor Debited but not Credited in Cashbook';
   }
   if (from === 'Company' && amount < 0) return 'Unpresented Checks';
   if (from === 'Company' && amount >= 0) return 'Uncleared Checks';
-  if (from === 'Bank' && amount >= 0) return 'Bank Credited But not Debited in Cashbook';
-  return 'Bank Debited But not Credited in Cashbook';
+  if (from === 'Bank' && amount >= 0) return 'Bank Debited But not Credited in Cashbook';
+  return 'Bank Credited But not Debited in Cashbook';
 }
 
 export function ReconciliationResults({ result, onStartNew, pdfFileName, excelFileName }: ReconciliationResultsProps) {
@@ -126,7 +130,13 @@ export function ReconciliationResults({ result, onStartNew, pdfFileName, excelFi
     push: setDiscrepancies,
     undo: undoDiscrepancies,
   } = useHistoryState<DiscrepancyTransaction[]>(
-    Array.isArray(result.results?.discrepancies) ? result.results.discrepancies : []
+    Array.isArray(result.results?.discrepancies)
+      ? result.results.discrepancies.map((d) => ({
+          ...d,
+          // Rows merged from a past file at submit time move as a set.
+          from_past_file: d.from_past === true,
+        }))
+      : []
   );
   const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set());
 
@@ -355,6 +365,11 @@ export function ReconciliationResults({ result, onStartNew, pdfFileName, excelFi
       let from: 'Bank' | 'Company';
       let amount: number;
 
+      // Amount sign follows the finalized canonical convention
+      // (contracts/sign-convention.md §2):
+      //   Company: credit -, debit +
+      //   Bank:    debit +, credit -
+      //   Vendor:  credit +, debit -
       if (category === unpresentedLabel) {
         from = 'Company';
         amount = -Math.abs(draft.amount);
@@ -363,10 +378,14 @@ export function ReconciliationResults({ result, onStartNew, pdfFileName, excelFi
         amount = Math.abs(draft.amount);
       } else if (isBankSide && category === creditedLabel) {
         from = 'Bank';
-        amount = Math.abs(draft.amount);
+        amount = reconciliationType === 'vendor'
+          ? Math.abs(draft.amount)
+          : -Math.abs(draft.amount);
       } else {
         from = 'Bank';
-        amount = -Math.abs(draft.amount);
+        amount = reconciliationType === 'vendor'
+          ? -Math.abs(draft.amount)
+          : Math.abs(draft.amount);
       }
 
       const manual: DiscrepancyTransaction = {
@@ -434,7 +453,12 @@ export function ReconciliationResults({ result, onStartNew, pdfFileName, excelFi
 
       const fileName = saveName.trim() || `reconciliation-${Date.now()}`;
 
-      const result = await cloudHistoryClient.saveCloudFile(token, fileName, fileData);
+      const result = await cloudHistoryClient.saveCloudFile(
+        token,
+        fileName,
+        fileData,
+        reconciliationType,
+      );
       setSaveMessage(`Saved "${result.file_name}" successfully`);
       setSaveName('');
     } catch (err) {
@@ -454,9 +478,14 @@ export function ReconciliationResults({ result, onStartNew, pdfFileName, excelFi
 
   const handleLoadPastFile = useCallback(
     async (fileName: string) => {
-      // "None" — clear the selection without merging anything.
-      if (!fileName) return;
       const token = (session?.user as { access_token?: string } | undefined)?.access_token;
+
+      // "None" — drop every past-file-loaded entry, keep manual/current rows.
+      if (!fileName) {
+        setDiscrepancies(prev => prev.filter(d => !d.from_past_file));
+        setReconHistoryOpen(false);
+        return;
+      }
       if (!token) return;
       try {
         const pastData = await cloudHistoryClient.loadByName(token, fileName);
@@ -465,20 +494,19 @@ export function ReconciliationResults({ result, onStartNew, pdfFileName, excelFi
           'Transaction_date': p.transaction_date,
           'Transaction Detail': p.transaction_details,
           'Debit/Credit': p.debit_credit_amount,
-          'FROM': p.category && p.category.includes('Bank') ? 'Bank' : 'Company',
+          // Vendor category labels carry the source-side (statement) rows, so
+          // they map to "Bank" (the source slot) — never "Company".
+          'FROM': p.category && (p.category.includes('Bank') || p.category.includes('Vendor')) ? 'Bank' : 'Company',
           from_past: true,
+          from_past_file: true,
         }));
         setDiscrepancies(prev => {
-          const currentKeys = new Set(
-            prev.map(d => `${d['Transaction Detail']}|${d['Transaction_date']}`)
-          );
-          const toAdd = mapped.filter(p => {
-            const key = `${p['Transaction Detail']}|${p['Transaction_date']}`;
-            if (currentKeys.has(key)) return false;
-            currentKeys.add(key);
-            return true;
-          });
-          const combined = [...prev, ...toAdd];
+          // REPLACE: drop the previously loaded past file's rows (so choosing a
+          // different file swaps them out entirely), keep manual/current rows.
+          // Append every entry from the new file as-is — identical duplicates
+          // are legitimate and must NOT be collapsed.
+          const base = prev.filter(d => !d.from_past_file);
+          const combined = [...base, ...mapped];
           combined.sort((a, b) => (a['Transaction_date'] ?? '').localeCompare(b['Transaction_date'] ?? ''));
           return combined;
         });

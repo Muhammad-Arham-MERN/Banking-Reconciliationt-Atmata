@@ -11,12 +11,12 @@ from typing import List
 class BankTransaction(BaseModel):
     """Individual transaction from bank statement.
 
-    Bank convention: Credit = positive (money in), Debit = negative (money out).
+    Bank convention: Debit = positive (money out), Credit = negative (money in).
     """
 
     Transaction_date: str = Field(..., description="Transaction date in YYYY-MM-DD format")
     Transaction_Detail: str = Field(..., description="Transaction description")
-    Debit_Credit: float = Field(..., description="Amount with sign (positive = credit, negative = debit)")
+    Debit_Credit: float = Field(..., description="Amount with sign (Bank: debit = positive, credit = negative)")
 
     model_config = {
         "json_schema_extra": {
@@ -67,13 +67,13 @@ class CompanyTransaction(BaseModel):
 class DiscrepancyTransaction(BaseModel):
     """Transaction present in one source but not the other.
 
-    Sign follows the source's own convention: Bank credit + / debit -;
-    Company (and vendor) credit - / debit +.
+    Sign follows the canonical convention (contracts/sign-convention.md §2):
+    Bank debit + / credit −; Company debit + / credit −; Vendor debit − / credit +.
     """
 
     Transaction_date: str = Field(..., description="Transaction date in YYYY-MM-DD format")
     Transaction_Detail: str = Field(..., description="Transaction description")
-    Debit_Credit: float = Field(..., description="Amount with sign (per the source's convention: Bank credit +/debit -; Company credit -/debit +)")
+    Debit_Credit: float = Field(..., description="Amount with sign (Bank/Company debit +/credit -; Vendor debit -/credit +)")
     FROM: str = Field(..., description="Source of this discrepancy: 'Bank' or 'Company'")
     from_past: bool = Field(False, description="Whether this entry originated from a loaded history file")
 

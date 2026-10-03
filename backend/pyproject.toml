@@ -24,8 +24,10 @@ dependencies = [
     "python-dotenv>=1.0.0",
     "PyJWT>=2.8.0",
     "aiofiles>=23.2.1",
-    "docstrange>=1.1.8",
-    "nanonetsclient>=1.0.4",
+    # Security / Encryption (company credential encryption at rest)
+    "cryptography>=43.0.0",
+    # Notifications (company onboarding request email)
+    "resend>=2.49.1",
 ]
 
 # وَإِنَّ اللَّهَ لَهُوَ خَيْرُ الرَّازِقِينَ

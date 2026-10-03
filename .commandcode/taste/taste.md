@@ -5,6 +5,9 @@
 # imports
 - Import utility functions (categorizeTransaction, generateItemId, getDisplayAmount, formatAmount) from @/lib/utils/categorizationUtils, not from @/types/categorization.types. Confidence: 0.75
 
+# communication
+- When a technical explanation or an abstract clarification question doesn't land, he says so plainly and wants it re-explained with a concrete analogy — "did not understand explain with analogy" for a code explanation, and "i did not understand question well" when a spec-clarification question about data modeling/architecture was too abstract (the reply that worked re-explained a company-request-vs-company-account decision as a restaurant reservation book: the phone call = the request form, the table + bill = the company account created later). Expects a concrete everyday analogy whose elements map 1:1 onto the mechanism (React keys → coat-check tickets, module-level counter → ticket roll, company request → reservation book entry), plus the fix/decision restated in the analogy's terms and an honest note on real-world impact (dev-only noise vs a real latent bug; clean companies list vs clutter). Confidence: 0.7
+
 # typescript
 - Use `export type { ... }` syntax when re-exporting types from other modules to satisfy isolatedModules constraint. Confidence: 0.70
 
@@ -48,3 +51,6 @@ See [workflow/taste.md](workflow/taste.md)
 
 # backend-api
 See [backend-api/taste.md](backend-api/taste.md)
+
+# docker
+See [docker/taste.md](docker/taste.md)

@@ -23,8 +23,9 @@ function formatAmount(amount: number): string {
   return amount >= 0 ? `+${formatted}` : `-${formatted}`;
 }
 
-/** Wire Debit/Credit carries the pure source-specific sign convention
- *  (Bank: credit + / debit -; Company: credit - / debit +); display as-is. */
+/** Wire Debit/Credit carries the canonical sign convention with no per-surface
+ *  flips (contracts/sign-convention.md §2): Bank/Company debit +, credit -;
+ *  Vendor debit -, credit +. Display the value as-is. */
 function getDisplayAmount(discrepancy: DiscrepancyTransaction): number {
   return discrepancy['Debit/Credit'];
 }
