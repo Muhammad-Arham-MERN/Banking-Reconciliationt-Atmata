@@ -14,6 +14,11 @@ venv/
 uploads/
 *.sqlite
 
+# Persistent runtime data — company logos (mounted as a volume in production,
+# deliberately kept out of UPLOAD_DIR so the retention/shutdown sweeps never
+# touch it)
+data/
+
 # Legacy "Open de Past" local SQLite history folder (feature removed; never ship)
 Reconciliation History/
 history/

@@ -1,3 +1,4 @@
+/* بِسْمِ اللَّهِ الرَّحْمٰنِ الرَّحِيمِ */
 'use client';
 
 import { useState, useCallback, useMemo, useRef, useEffect } from 'react';
@@ -15,11 +16,9 @@ import {
 } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import {
-  CheckCircle2,
-  Clock,
-  FileSearch,
+  ChevronDown,
+  ChevronRight,
   History,
-  MessagesSquare,
   RotateCcw,
   Save,
   Undo2,
@@ -33,8 +32,8 @@ import { formatAmount, categoryLabel } from '@/lib/utils/categorizationUtils';
 import { cloudHistoryClient } from '@/lib/api/cloudHistoryClient';
 import type { CloudHistoryEntry, MergeHistoryEntry } from '@/types/cloud-history.types';
 import { Input } from '@/components/ui/input';
-import { AdvisorPanel } from '@/components/advisor/AdvisorPanel';
-import { AdvisorChat } from '@/components/advisor/AdvisorChat';
+import { ReconcilingAssistant } from '@/components/advisor/ReconcilingAssistant';
+import { Collapsible, CollapsibleTrigger, CollapsibleContent } from '@/components/ui/collapsible';
 import { runAdvisorReconcile, cancelAdvisorRun } from '@/lib/api/advisorClient';
 import type {
   AdvisorDiscrepancy,
@@ -70,53 +69,36 @@ interface ReconciliationResultsProps {
   excelFileName?: string;
 }
 
-function formatTimestamp(timestamp: string): string {
-  return new Date(timestamp).toLocaleString('en-US', {
-    dateStyle: 'medium',
-    timeStyle: 'short',
-  });
-}
-
 function formatDuration(ms: number): string {
   if (ms < 1000) return `${ms} ms`;
   return `${(ms / 1000).toFixed(2)} s`;
 }
 
-function statusVariant(status: ReconciliationResult['processing_status']) {
-  switch (status) {
-    case 'completed':
-      return 'default' as const;
-    case 'partial':
-      return 'secondary' as const;
-    case 'error':
-      return 'destructive' as const;
-    default:
-      return 'outline' as const;
-  }
-}
-
 // Helper: determine category from source, amount, and reconciliation mode.
-// Wire values carry the pure source-specific convention (no flips):
-//   Bank:    credit = +, debit = -
-//   Company: credit = -, debit = +  (Unpresented = -, Uncleared = +)
-//   Vendor:  credit = -, debit = +  (source-side rows)
+// Finalized canonical wire convention (contracts/sign-convention.md §2), no flips:
+//   Bank:    debit = +, credit = -
+//   Company: debit = +, credit = -  (Unpresented = -, Uncleared = +)
+//   Vendor:  debit = -, credit = +  (source-side rows)
+// The sign predicates mirror categorizationUtils.categorizeTransaction; this
+// returns the PERSISTED title-case label the backend keys its past-file Excel
+// sign map on (past_files_excel_service._SIGN_BY_CATEGORY), so keep the two in sync.
 function categorizeDiscrepancy(from: string, amount: number, mode: 'bank' | 'vendor' = 'bank'): string {
   if (mode === 'vendor') {
     if (from === 'Company' && amount < 0) return 'Unpresented Checks';
     if (from === 'Company' && amount >= 0) return 'Uncleared Checks';
-    if (from === 'Bank' && amount >= 0) return 'Vendor Debited but not Credited in Cashbook';
-    return 'Vendor Credited But not Debited in Cashbook';
+    if (from === 'Bank' && amount >= 0) return 'Vendor Credited But not Debited in Cashbook';
+    return 'Vendor Debited but not Credited in Cashbook';
   }
   if (from === 'Company' && amount < 0) return 'Unpresented Checks';
   if (from === 'Company' && amount >= 0) return 'Uncleared Checks';
-  if (from === 'Bank' && amount >= 0) return 'Bank Credited But not Debited in Cashbook';
-  return 'Bank Debited But not Credited in Cashbook';
+  if (from === 'Bank' && amount >= 0) return 'Bank Debited But not Credited in Cashbook';
+  return 'Bank Credited But not Debited in Cashbook';
 }
 
 export function ReconciliationResults({ result, onStartNew, pdfFileName, excelFileName }: ReconciliationResultsProps) {
   const { data: session } = useSession();
   const { reconciliationType } = useReconciliationType();
-  const { request_id, processing_status, processing_timestamp, summary } = result;
+  const { request_id, summary } = result;
 
   // ---- Undoable live discrepancy list (feature 5) ----
   // The undo stack (past snapshots) is reset whenever the component remounts
@@ -126,7 +108,13 @@ export function ReconciliationResults({ result, onStartNew, pdfFileName, excelFi
     push: setDiscrepancies,
     undo: undoDiscrepancies,
   } = useHistoryState<DiscrepancyTransaction[]>(
-    Array.isArray(result.results?.discrepancies) ? result.results.discrepancies : []
+    Array.isArray(result.results?.discrepancies)
+      ? result.results.discrepancies.map((d) => ({
+          ...d,
+          // Rows merged from a past file at submit time move as a set.
+          from_past_file: d.from_past === true,
+        }))
+      : []
   );
   const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set());
 
@@ -355,6 +343,11 @@ export function ReconciliationResults({ result, onStartNew, pdfFileName, excelFi
       let from: 'Bank' | 'Company';
       let amount: number;
 
+      // Amount sign follows the finalized canonical convention
+      // (contracts/sign-convention.md §2):
+      //   Company: credit -, debit +
+      //   Bank:    debit +, credit -
+      //   Vendor:  credit +, debit -
       if (category === unpresentedLabel) {
         from = 'Company';
         amount = -Math.abs(draft.amount);
@@ -363,10 +356,14 @@ export function ReconciliationResults({ result, onStartNew, pdfFileName, excelFi
         amount = Math.abs(draft.amount);
       } else if (isBankSide && category === creditedLabel) {
         from = 'Bank';
-        amount = Math.abs(draft.amount);
+        amount = reconciliationType === 'vendor'
+          ? Math.abs(draft.amount)
+          : -Math.abs(draft.amount);
       } else {
         from = 'Bank';
-        amount = -Math.abs(draft.amount);
+        amount = reconciliationType === 'vendor'
+          ? -Math.abs(draft.amount)
+          : Math.abs(draft.amount);
       }
 
       const manual: DiscrepancyTransaction = {
@@ -434,7 +431,12 @@ export function ReconciliationResults({ result, onStartNew, pdfFileName, excelFi
 
       const fileName = saveName.trim() || `reconciliation-${Date.now()}`;
 
-      const result = await cloudHistoryClient.saveCloudFile(token, fileName, fileData);
+      const result = await cloudHistoryClient.saveCloudFile(
+        token,
+        fileName,
+        fileData,
+        reconciliationType,
+      );
       setSaveMessage(`Saved "${result.file_name}" successfully`);
       setSaveName('');
     } catch (err) {
@@ -454,9 +456,14 @@ export function ReconciliationResults({ result, onStartNew, pdfFileName, excelFi
 
   const handleLoadPastFile = useCallback(
     async (fileName: string) => {
-      // "None" — clear the selection without merging anything.
-      if (!fileName) return;
       const token = (session?.user as { access_token?: string } | undefined)?.access_token;
+
+      // "None" — drop every past-file-loaded entry, keep manual/current rows.
+      if (!fileName) {
+        setDiscrepancies(prev => prev.filter(d => !d.from_past_file));
+        setReconHistoryOpen(false);
+        return;
+      }
       if (!token) return;
       try {
         const pastData = await cloudHistoryClient.loadByName(token, fileName);
@@ -465,20 +472,19 @@ export function ReconciliationResults({ result, onStartNew, pdfFileName, excelFi
           'Transaction_date': p.transaction_date,
           'Transaction Detail': p.transaction_details,
           'Debit/Credit': p.debit_credit_amount,
-          'FROM': p.category && p.category.includes('Bank') ? 'Bank' : 'Company',
+          // Vendor category labels carry the source-side (statement) rows, so
+          // they map to "Bank" (the source slot) — never "Company".
+          'FROM': p.category && (p.category.includes('Bank') || p.category.includes('Vendor')) ? 'Bank' : 'Company',
           from_past: true,
+          from_past_file: true,
         }));
         setDiscrepancies(prev => {
-          const currentKeys = new Set(
-            prev.map(d => `${d['Transaction Detail']}|${d['Transaction_date']}`)
-          );
-          const toAdd = mapped.filter(p => {
-            const key = `${p['Transaction Detail']}|${p['Transaction_date']}`;
-            if (currentKeys.has(key)) return false;
-            currentKeys.add(key);
-            return true;
-          });
-          const combined = [...prev, ...toAdd];
+          // REPLACE: drop the previously loaded past file's rows (so choosing a
+          // different file swaps them out entirely), keep manual/current rows.
+          // Append every entry from the new file as-is — identical duplicates
+          // are legitimate and must NOT be collapsed.
+          const base = prev.filter(d => !d.from_past_file);
+          const combined = [...base, ...mapped];
           combined.sort((a, b) => (a['Transaction_date'] ?? '').localeCompare(b['Transaction_date'] ?? ''));
           return combined;
         });
@@ -531,6 +537,7 @@ export function ReconciliationResults({ result, onStartNew, pdfFileName, excelFi
   const [searchQuery, setSearchQuery] = useState('');
   const [sortState, setSortState] = useState<Record<string, SortDirection>>({});
   const [collapsedCategories, setCollapsedCategories] = useState<Set<string>>(new Set());
+  const [summaryCollapsed, setSummaryCollapsed] = useState(false);
 
   const handleToggleCollapse = useCallback((category: string) => {
     setCollapsedCategories(prev => {
@@ -632,107 +639,74 @@ export function ReconciliationResults({ result, onStartNew, pdfFileName, excelFi
       )}
 
       {(advisorResponse || advisorRunning) && (
-        <AdvisorPanel
-          advisorResponse={advisorResponse}
+        <ReconcilingAssistant
+          token={
+            (session?.user as { access_token?: string } | undefined)
+              ?.access_token ?? ''
+          }
+          requestId={request_id}
+          discrepancies={discrepancies}
+          buildDiscrepancies={buildAdvisorDiscrepancies}
+          buildBalanceContext={buildBalanceContext}
           liveKeys={liveKeys}
           onReconcile={handleAdvisorReconcile}
+          advisorResponse={advisorResponse}
           isRunning={advisorRunning}
         />
       )}
 
-      {advisorResponse && !advisorRunning && (
+      <Collapsible open={!summaryCollapsed} onOpenChange={(open) => setSummaryCollapsed(!open)}>
         <Card>
           <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <MessagesSquare className="size-4" />
-              Ask the Agent
-            </CardTitle>
-            <CardDescription>
-              Follow-up questions about the reconciliation — the agent always
-              sees the current discrepancies list.
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <AdvisorChat
-              token={
-                (session?.user as { access_token?: string } | undefined)
-                  ?.access_token ?? ''
-              }
-              requestId={request_id}
-              discrepancies={discrepancies}
-              buildDiscrepancies={buildAdvisorDiscrepancies}
-              buildBalanceContext={buildBalanceContext}
-            />
-          </CardContent>
-        </Card>
-      )}
-
-      <Card>
-        <CardHeader>
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <div className="space-y-1">
-              <CardTitle className="flex items-center gap-2">
-                <FileSearch className="size-4" />
-                Request Details
-              </CardTitle>
-              <CardDescription>Processing metadata for this reconciliation run</CardDescription>
-            </div>
-            <Badge variant={statusVariant(processing_status)} className="capitalize">
-              {processing_status === 'completed' && <CheckCircle2 data-icon="inline-start" />}
-              {processing_status}
-            </Badge>
-          </div>
-        </CardHeader>
-        <CardContent className="grid gap-4 sm:grid-cols-2">
-          <div className="rounded-lg border bg-muted/30 p-4">
-            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-              Request ID
-            </p>
-            <p className="mt-1 break-all font-mono text-sm">{request_id}</p>
-          </div>
-          <div className="rounded-lg border bg-muted/30 p-4">
-            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-              Processing Timestamp
-            </p>
-            <p className="mt-1 flex items-center gap-2 text-sm">
-              <Clock className="size-4 text-muted-foreground" />
-              {formatTimestamp(processing_timestamp)}
-            </p>
-          </div>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Summary</CardTitle>
-          <CardDescription>Overview of transactions processed and reconciliation outcome</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            {pdfFileName && (
-              <div className="rounded-lg border px-4 py-3" title={pdfFileName}>
-                <p className="text-xs text-muted-foreground">Bank Statement (PDF)</p>
-                <p className="mt-1 truncate text-sm font-semibold">{pdfFileName}</p>
-              </div>
-            )}
-            {excelFileName && (
-              <div className="rounded-lg border px-4 py-3" title={excelFileName}>
-                <p className="text-xs text-muted-foreground">Company Data (Excel)</p>
-                <p className="mt-1 truncate text-sm font-semibold">{excelFileName}</p>
-              </div>
-            )}
-            {summaryItems.map((item) => (
-              <div
-                key={item.label}
-                className="rounded-lg border px-4 py-3"
+            <div className="flex items-center gap-2">
+              <CollapsibleTrigger
+                render={
+                  <button
+                    type="button"
+                    className="rounded-md p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+                    aria-label={summaryCollapsed ? 'Expand Summary' : 'Collapse Summary'}
+                  />
+                }
               >
-                <p className="text-xs text-muted-foreground">{item.label}</p>
-                <p className="mt-1 text-lg font-semibold">{item.value}</p>
+                {summaryCollapsed ? (
+                  <ChevronRight className="size-4" />
+                ) : (
+                  <ChevronDown className="size-4" />
+                )}
+              </CollapsibleTrigger>
+              <CardTitle>Summary</CardTitle>
+            </div>
+            <CardDescription>Overview of transactions processed and reconciliation outcome</CardDescription>
+          </CardHeader>
+          <CollapsibleContent>
+            <CardContent>
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                {pdfFileName && (
+                  <div className="rounded-lg border px-4 py-3" title={pdfFileName}>
+                    <p className="text-xs text-muted-foreground">Bank Statement (PDF)</p>
+                    <p className="mt-1 truncate text-sm font-semibold">{pdfFileName}</p>
+                  </div>
+                )}
+                {excelFileName && (
+                  <div className="rounded-lg border px-4 py-3" title={excelFileName}>
+                    <p className="text-xs text-muted-foreground">Company Data (Excel)</p>
+                    <p className="mt-1 truncate text-sm font-semibold">{excelFileName}</p>
+                  </div>
+                )}
+                {summaryItems.map((item) => (
+                  <div
+                    key={item.label}
+                    className="rounded-lg border px-4 py-3"
+                  >
+                    <p className="text-xs text-muted-foreground">{item.label}</p>
+                    <p className="mt-1 text-lg font-semibold">{item.value}</p>
+                  </div>
+                ))}
               </div>
-            ))}
-          </div>
-        </CardContent>
-      </Card>
+            </CardContent>
+          </CollapsibleContent>
+        </Card>
+      </Collapsible>
 
       <Card>
         <CardHeader>

@@ -40,6 +40,11 @@ def update_cancel_handle(request_id: str, cancel_fn: Callable[[], None]) -> None
         entry["cancel"] = cancel_fn
 
 
+def is_active(request_id: str) -> bool:
+    """Whether a run is currently registered (in-flight and cancellable)."""
+    return request_id in _ACTIVE_RUNS
+
+
 def is_cancelled(request_id: str) -> bool:
     """Whether the client requested cancellation for this run."""
     entry = _ACTIVE_RUNS.get(request_id)

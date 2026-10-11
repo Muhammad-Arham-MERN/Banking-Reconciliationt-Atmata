@@ -51,6 +51,47 @@ class Settings(BaseSettings):
     NEXTAUTH_SECRET: str = ""
     DATABASE_URL: str = ""
 
+    # Admin Dashboard (Camri Desk) — Developer-only hidden route.
+    # Credentials live ONLY in the environment and are never shipped to the
+    # client bundle; they are compared server-side on every sign-in attempt.
+    ADMIN_USERNAME: str = ""
+    ADMIN_PASSWORD: str = ""
+    # Signs the admin session token (HS256). Deliberately separate from
+    # NEXTAUTH_SECRET so the admin session is independent of normal app users.
+    ADMIN_JWT_SECRET: str = ""
+    # Server-side backstop only — the browser session (sessionStorage) is what
+    # actually ends the session when the browser closes.
+    ADMIN_JWT_TTL_HOURS: int = 12
+
+    # Company Dashboard — the company-facing sign-in is its own principal,
+    # separate from the admin and from the Google (NextAuth) users. This secret
+    # signs the company session token (HS256). When it is empty, company
+    # sign-in fails closed with 503 rather than authenticating blindly.
+    COMPANY_JWT_SECRET: str = ""
+    # Company sessions last 24 hours and survive browser restarts (localStorage).
+    COMPANY_JWT_TTL_HOURS: int = 24
+
+    # Reversible symmetric key for encrypting company access passwords at rest.
+    # Generate once with:
+    #   python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+    # If this is missing, company create/update fail closed (never plaintext).
+    FERNET_KEY: str = ""
+
+    # Company logos live OUTSIDE UPLOAD_DIR on purpose: cleanup_old_files
+    # (20-minute retention) and cleanup_all_files (shutdown) sweep UPLOAD_DIR and
+    # would silently delete every company logo. Env-overridable.
+    COMPANY_LOGO_DIR: Path = Path(os.getenv("COMPANY_LOGO_DIR", str(Path(__file__).parent.parent / "data" / "company_logos")))
+
+    # Notifications — Resend (company onboarding request email).
+    # The Developer is notified when a company submits the "Company Request"
+    # onboarding flow. This is best-effort: when RESEND_API_KEY is empty the
+    # send is skipped with a warning and the request is still stored (FR-007).
+    RESEND_API_KEY: str = ""
+    # Verified sender address configured in the Resend dashboard.
+    RESEND_FROM_EMAIL: str = ""
+    # Who receives the new-company-request notification.
+    COMPANY_REQUEST_NOTIFY_EMAIL: str = "ArhamBrowser@gmail.com"
+
     # AI Structure Detection (Istikhraj e Data Ma'a AI)
     # Model id (LiteLLM-prefixed, e.g. "gemini/gemini-2.0-flash") and provider
     # API key. Never hardcoded - driven by environment variables (FR-010).
@@ -82,5 +123,9 @@ settings = Settings()
 
 # Ensure upload directory exists
 settings.UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+
+# Ensure the company logo directory exists (kept out of UPLOAD_DIR so the
+# retention/shutdown cleanups never touch persistent company assets)
+settings.COMPANY_LOGO_DIR.mkdir(parents=True, exist_ok=True)
 
 # وَإِنَّ اللَّهَ لَهُوَ خَيْرُ الرَّازِقِينَ

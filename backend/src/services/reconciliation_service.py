@@ -20,6 +20,7 @@ class ReconciliationService:
 
     def __init__(self):
         self.processing_time_ms = 0
+        self.matched_pairs_removed = 0
         self.pair_mate_pairs_removed = 0
 
     def reconcile(self,
@@ -28,9 +29,17 @@ class ReconciliationService:
         """
         Perform reconciliation between bank and company transactions.
 
+        A statement-side row (Bank, or the Vendor ledger in vendor mode) and a
+        company-side row represent the same transaction when they carry the
+        same magnitude with opposite signs (canonical convention,
+        contracts/sign-convention.md §2). Matched pairs are consumed 1:1 and
+        removed; the leftovers are reported as discrepancies with source
+        attribution. Same-date opposite-sign pairs remaining within one source
+        are then cancelled by the pair-mate filter.
+
         Args:
-            bank_transactions: List of bank transaction dictionaries
-            company_transactions: List of company transaction dictionaries
+            bank_transactions: Statement-side rows (bank, or vendor in vendor mode)
+            company_transactions: Company cash-book rows
 
         Returns:
             List of discrepancy transactions with source attribution
@@ -45,16 +54,14 @@ class ReconciliationService:
         company_used = [False] * len(company_transactions)
         bank_used = [False] * len(bank_transactions)
 
-        # Find discrepancies from both sources
+        # Cross-source matching (statement side vs company side). Each pass
+        # consumes its pair 1:1, so every consumed bank/vendor row is one
+        # matched pair removed; the leftovers become discrepancies.
         bank_discrepancies = self._find_bank_discrepancies(bank_transactions, company_transactions, company_used, bank_used)
         company_discrepancies = self._find_company_discrepancies(company_transactions, bank_transactions, company_used, bank_used)
+        self.matched_pairs_removed = sum(1 for used in bank_used if used)
 
-        # Layer 1 (sam-sam leftovers): remove opposite sign pairs across sources
-        bank_discrepancies, company_discrepancies = self._remove_opposite_pairs(
-            bank_discrepancies, company_discrepancies
-        )
-
-        # Layer 2 (pair-mate): cancel same-date opposite-sign pairs within each source
+        # Pair-mate: cancel same-date opposite-sign pairs within each source
         bank_discrepancies, company_discrepancies, pair_mate_pairs = self._remove_pair_mate_pairs(
             bank_discrepancies, company_discrepancies
         )
@@ -85,8 +92,9 @@ class ReconciliationService:
         Compute the cumulative Bank-vs-Company running totals over the final
         discrepancy list (FR-002b, AI Reconciler Advisor feature 007).
 
-        Each discrepancy's signed Debit/Credit (negative = debit, positive =
-        credit) is added to its own FROM bucket only; every item produces a
+        Each discrepancy's signed Debit/Credit (canonical convention: Bank and
+        Company debit = +, credit = -; Vendor debit = -, credit = +) is added to
+        its own FROM bucket only; every item produces a
         BalancePoint (index, discrepancy_id, bank_running, company_running,
         net = bank_running + company_running) in list order, plus the final
         bank_balance / company_balance summary totals. The Reconciler Agent
@@ -126,10 +134,10 @@ class ReconciliationService:
                                 company_used: List[bool],
                                 bank_used: List[bool]) -> List[Dict[str, Any]]:
         """
-        Find bank transactions that don't have a matching amount in company records.
-        Matching based ONLY on amount: bank_amount == company_amount.
-        When a match is found, the company entry is marked as consumed so it is
-        removed together with this bank entry and cannot be reused.
+        Find statement-side (bank/vendor) transactions that have no matching
+        company record. A match is equal magnitude with OPPOSITE sign
+        (bank_amount == -company_amount). When a match is found, both entries
+        are marked consumed so they are removed together and cannot be reused.
         """
         discrepancies = []
 
@@ -163,10 +171,10 @@ class ReconciliationService:
                                    company_used: List[bool],
                                    bank_used: List[bool]) -> List[Dict[str, Any]]:
         """
-        Find company transactions that don't have a matching amount in bank statement.
-        Matching based ONLY on amount: company_amount == bank_amount.
-        Entries already consumed by a bank pair are skipped, so the bank entry
-        is never reused to cancel multiple company rows.
+        Find company transactions that have no matching statement-side record.
+        A match is equal magnitude with OPPOSITE sign
+        (company_amount == -bank_amount). Entries already consumed by a bank
+        pair are skipped, so a statement-side entry is never reused.
         """
         discrepancies = []
 
@@ -207,45 +215,13 @@ class ReconciliationService:
 
     def _amounts_match(self, amount1: float, amount2: float) -> bool:
         """
-        Check if two amounts match after rounding to whole numbers.
-        Original values are preserved in discrepancy output.
+        Check whether a statement-side amount (Bank/Vendor) and a company-side
+        amount represent the same transaction: equal magnitude after rounding
+        to whole numbers, with OPPOSITE signs (a cheque issued is a company
+        credit, negative, and a bank/vendor debit, positive; a receipt is the
+        reverse). Original values are preserved in discrepancy output.
         """
-        return self._round_amount(amount1) == self._round_amount(amount2)
-
-    def _remove_opposite_pairs(self,
-                              bank_discrepancies: List[Dict[str, Any]],
-                              company_discrepancies: List[Dict[str, Any]]) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
-        """
-        Remove opposite sign pairs from discrepancy lists.
-        Maintains deterministic order and preserves source attribution.
-        Returns the filtered bank and company discrepancy lists separately.
-        """
-        # Build amount lookup for company discrepancies
-        company_amounts = [tx.get('Debit/Credit', 0.0) for tx in company_discrepancies]
-        company_used = [False] * len(company_discrepancies)
-
-        # Filter bank discrepancies (remove if opposite found in company)
-        filtered_bank = []
-        for bank_tx in bank_discrepancies:
-            matched = False
-            bank_amount = bank_tx.get('Debit/Credit', 0.0)
-
-            # Look for opposite in company discrepancies
-            for i, company_amount in enumerate(company_amounts):
-                if not company_used[i] and self._amounts_match(bank_amount, company_amount):
-                    matched = True
-                    company_used[i] = True  # Mark as used
-                    break
-
-            if not matched:
-                filtered_bank.append(bank_tx)
-
-        # Filter company discrepancies (remove used ones)
-        filtered_company = [
-            tx for tx, used in zip(company_discrepancies, company_used) if not used
-        ]
-
-        return filtered_bank, filtered_company
+        return self._round_amount(amount1) == -self._round_amount(amount2)
 
     def _pair_mate_amounts_match(self, amount1: float, amount2: float) -> bool:
         """

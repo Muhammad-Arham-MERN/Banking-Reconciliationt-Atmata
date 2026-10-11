@@ -22,6 +22,7 @@ export interface CloudHistoryEntry {
 export interface SaveCloudFileRequest {
   file_name: string;
   file_data: CloudHistoryEntry[];
+  reconciliation_type: PastFileReconciliationType;
 }
 
 /** Response from POST /api/cloud/save_files_cloud */

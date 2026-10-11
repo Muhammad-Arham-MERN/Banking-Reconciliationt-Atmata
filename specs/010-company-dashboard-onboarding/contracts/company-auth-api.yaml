@@ -1,0 +1,156 @@
+openapi: 3.1.0
+info:
+  title: Company Authentication API
+  version: 1.0.0
+  description: >
+    The single backend endpoint introduced by feature 010 — the company sign-in that
+    backs the new Company Dashboard. It is the ONLY part of this specification that talks
+    to the backend; the cinematic onboarding, the dashboard's Employees and Subscription
+    sections, and the Admin Dashboard's "Company Requests" category are frontend
+    structure rendered from placeholder data.
+
+    A company has no Google/NextAuth session, so this endpoint is public (like
+    `/api/admin/login`) and rides a dedicated company branch of the backend middleware:
+    the login path is exempt, and any future `/api/company/*` path is gated by the
+    company JWT this endpoint issues.
+servers:
+  - url: http://localhost:8000
+    description: Local development
+
+paths:
+  /api/company/login:
+    post:
+      summary: Sign a company in to the Company Dashboard
+      description: >
+        Verifies the submitted company name and password against the company record the
+        Developer created in the Admin Dashboard (feature 008). The name is trimmed and
+        matched case-insensitively; the stored password is a Fernet ciphertext that is
+        decrypted and compared in constant time. On success, issues a company JWT
+        (HS256, `COMPANY_JWT_SECRET`) valid for 24 hours, which the client stores to
+        establish the dashboard session.
+      operationId: companyLogin
+      tags: [company]
+      security: []   # public — this IS the credential exchange
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CompanyLoginRequest"
+      responses:
+        "200":
+          description: Credentials accepted; the company session token is returned.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CompanyLoginResponse"
+        "400":
+          description: >
+            A required field is missing or blank (error `missing_field`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: >
+            The company name is unknown OR the password is incorrect (error
+            `invalid_credentials`). The response is identical in both cases and never
+            discloses which field was wrong (FR-017).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: >
+            The server cannot authenticate companies: the Fernet key is missing/malformed
+            (error `encryption_unavailable`) or the company signing secret is absent
+            (error `company_auth_not_configured`). Fails closed — no session is issued.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+components:
+  securitySchemes:
+    companyBearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: >
+        The company JWT issued by `/api/company/login` (24h). Reserved for future
+        company-scoped endpoints; this specification adds no other company endpoint.
+
+  schemas:
+    CompanyLoginRequest:
+      type: object
+      required: [company_name, password]
+      properties:
+        company_name:
+          type: string
+          minLength: 1
+          maxLength: 255
+          description: >
+            The company's name. Compared case-insensitively after trimming.
+          examples: ["Greaves Pakistan", "greaves pakistan"]
+        password:
+          type: string
+          minLength: 1
+          description: The company access password the Developer set in the Admin Dashboard.
+          examples: ["s3cret-pass"]
+
+    CompanyLoginResponse:
+      type: object
+      required: [token, expires_at, company]
+      properties:
+        token:
+          type: string
+          description: >
+            Company JWT (HS256) signed with `COMPANY_JWT_SECRET`; `exp` is set to
+            `expires_at`. The client stores it to establish the dashboard session.
+        expires_at:
+          type: string
+          format: date-time
+          description: Sign-in time + 24 hours (FR-018).
+        company:
+          $ref: "#/components/schemas/CompanyIdentity"
+
+    CompanyIdentity:
+      type: object
+      required: [id, name, logo_url]
+      properties:
+        id:
+          type: string
+          description: Stringified company id (SERIAL exceeds the JS safe-integer range).
+          examples: ["7"]
+        name:
+          type: string
+          description: The company's stored name, echoed for the dashboard header.
+          examples: ["Greaves Pakistan"]
+        logo_url:
+          type: string
+          nullable: true
+          description: >
+            Path to the authenticated logo endpoint (`/api/company/{id}/logo` once such a
+            route exists), or null when the company has no logo. The dashboard may render
+            a placeholder when it is null.
+          examples: [null]
+
+    ErrorResponse:
+      type: object
+      required: [error, message]
+      description: >
+        The structured envelope the admin, company, and employee routes share:
+        `{"error": "<code>", "message": "<human text>", "details": ... }`.
+      properties:
+        error:
+          type: string
+          examples:
+            - missing_field
+            - invalid_credentials
+            - encryption_unavailable
+            - company_auth_not_configured
+        message:
+          type: string
+          examples: ["Invalid company name or password."]
+        details:
+          type: [object, "null"]

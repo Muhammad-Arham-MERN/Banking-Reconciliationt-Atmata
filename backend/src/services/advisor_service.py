@@ -63,21 +63,56 @@ action. You have no tools.
 You receive:
 1. The COMPLETE final discrepancies list. Each item has a stable key
    (discrepancy_id), Transaction_date, Transaction Detail, a signed
-   Debit/Credit (negative = debit, positive = credit), and a source FROM
-   (Bank or Company).
+   Debit/Credit (canonical convention: Company and Bank debit = +, credit = -;
+   Vendor debit = -, credit = +), and a source FROM (Bank or Company).
 2. Cumulative totals/balance context: running Bank-vs-Company balances over
    the list (points per item + final bank_balance / company_balance).
 
-SUPPORTED CASES (you MUST analyze strictly for these two only — FR-003):
-- BROKEN_CHEQUE (broken cheques/pairs): a set of 2+ items on one side whose
-  signed amounts sum to a single item of the opposite sign on the other side,
+AUTHORITATIVE CONTEXT — READ CAREFULLY (FR-008a):
+- The discrepancies list and balance context in THIS prompt are the ONLY source
+  of truth — they reflect the CURRENT live state after every reconcile/add the
+  user has applied. The prompt states the exact number of current discrepancies.
+- The conversation history is provided for continuity ONLY. Any discrepancy
+  count, item name, or list that appears in the history is OBSOLETE. NEVER reuse,
+  repeat, or "remember" a count or list from the history.
+- Whenever the user asks anything about the discrepancies (how many remain,
+  which ones exist, what they are), you MUST recompute the answer from the
+  authoritative list in THIS prompt — never from the history and never from your
+  own earlier replies.
+- If the history and the authoritative list disagree, the authoritative list
+  always wins. Do not apologise for or reconcile the difference; simply answer
+  from the current list.
+
+SUPPORTED CASES (analyze for ALL of these by default — FR-003). A reconcilable
+set is any group of 2+ items whose signed amounts offset to zero (or a
+broken-cheque many-vs-one). Cover all three architectures:
+- BROKEN_CHEQUE (Company vs Bank): a set of 2+ items on one side whose signed
+  amounts sum to a single item of the opposite sign on the other side,
   typically near in date (e.g. Bank +79,000 and +100,000 vs Company -179,000).
-- REVERSAL: near-dated opposite-sign items of equal magnitude, with reversal
-  language in the transaction details as secondary evidence (e.g. Company
-  -45,000 on July 19 and +45,000 on July 24, details containing "reversal").
+- REVERSAL (Company vs Bank, or within one side): near-dated opposite-sign
+  items of equal magnitude, with reversal language in the transaction details
+  as secondary evidence (e.g. Company -45,000 on July 19 and +45,000 on July
+  24, details containing "reversal").
+- CROSS_SIDE_PAIR (Company vs Bank): two near-dated items on OPPOSITE sides
+  whose signed amounts offset exactly (equal magnitude, opposite sign) — a
+  reconcilable Company-vs-Bank pair the deterministic engine did not remove.
+- COMPANY_PAIR (Company vs Company): two or more items BOTH on the Company
+  side whose signed amounts offset to zero (e.g. +45,000 and -45,000 within
+  Company, or a small set summing to zero). These are reconcilable sets found
+  WITHIN the company data.
+- BANK_PAIR (Bank vs Bank): two or more items BOTH on the Bank side whose
+  signed amounts offset to zero — reconcilable sets found WITHIN the bank data.
+
+ARCHITECTURE — determined SOLELY by which sides a suggestion's items belong to
+(put each item in company_items or bank_items, matching its source FROM):
+- Company vs Bank: items on BOTH sides.
+- Company vs Company: items ONLY on the Company side.
+- Bank vs Bank: items ONLY on the Bank side.
+NEVER place an item under a side it does not belong to.
 
 By default (when the user clicks "Reconcile with Agent" or asks a general
-question) you MUST ONLY suggest these two types — never invent other kinds.
+question) you MUST suggest reconcilable sets across all three architectures
+above — never invent unrelated kinds.
 
 OTHER RECONCILABLES (only when explicitly requested in chat):
 - If the user explicitly ASKS in a chat message for "other reconcilables",
@@ -114,9 +149,10 @@ OUTPUT FORMAT (this is critical):
 - JSON schema — suggestions is an array; when there are no reconcilable sets
   return an empty array. Each suggestion is an object with exactly:
     * keys: array of the stable discrepancy_ids involved (2+ items).
-    * type: "BROKEN_CHEQUE" or "REVERSAL" — or, when the user explicitly asked
-      in chat for other reconcilables, a short human-readable name describing
-      the extra set (e.g. "DUPLICATE").
+    * type: one of "BROKEN_CHEQUE", "REVERSAL", "CROSS_SIDE_PAIR",
+      "COMPANY_PAIR", "BANK_PAIR" — or, when the user explicitly asked in chat
+      for other reconcilables, a short human-readable name describing the extra
+      set (e.g. "DUPLICATE").
     * company_items: array of the involved Company-side items, each
       {discrepancy_id, date, details, debit_credit, source: "Company"}.
     * bank_items: array of the involved Bank-side items, each
@@ -198,7 +234,7 @@ def _configure_tracing() -> None:
 
 # وَهُوَ عَلَى كُلِّ شَيْءٍ قَدِيرٌ
 def _build_agent() -> Agent:
-    """Build the no-tools Reconciler Agent with the strict two-case
+    """Build the no-tools Reconciler Agent with the strict supported-case
     instructions and the concise/authoritative rules.
 
     NOTE: no output_type — the agent returns its JSON inside a plain-text
@@ -213,17 +249,48 @@ def _build_agent() -> Agent:
 
 
 def _build_prompt(request: AdvisorReconcileRequest) -> str:
-    """Serialize the full discrepancy context + cumulative balance context +
+    """Serialize the current discrepancy context + cumulative balance context +
     history + optional question into the agent's prompt.
 
     The COMPLETE final discrepancies list is always sent in full, regardless
     of size — never sampled, summarized, or chunked (spec clarification).
+
+    Ordering matters (FR-008a): the OBSOLETE conversation history is placed
+    FIRST and the AUTHORITATIVE current list LAST, so the model conditions on
+    the latest live state rather than echoing counts/lists from its own earlier
+    replies. The exact current count is stated explicitly so "how many remain"
+    is never hallucinated.
     """
-    lines = [
-        "Here is the complete final discrepancies list for this reconciliation. "
-        "Each item carries its stable key, date, details, signed amount "
-        "(negative = debit, positive = credit), and source (FROM):",
-    ]
+    lines: list[str] = []
+
+    # Conversation history first, explicitly marked obsolete so the model does
+    # not anchor on its own earlier (now stale) counts or item lists.
+    if request.history:
+        lines.append(
+            "Conversation history — for continuity ONLY. Any discrepancy count, "
+            "item name, or list mentioned anywhere below is OBSOLETE and MUST be "
+            "ignored. Never repeat or reuse a count/list from this history; always "
+            "recompute from the AUTHORITATIVE CURRENT DISCREPANCIES section that "
+            "follows."
+        )
+        for message in request.history:
+            lines.append(f"- {message.role}: {message.content}")
+        lines.append("")
+
+    # Authoritative current context, placed last so it is freshest in context.
+    discrepancy_count = len(request.discrepancies)
+    lines.append(
+        "=== AUTHORITATIVE CURRENT DISCREPANCIES (the ONLY source of truth) ==="
+    )
+    lines.append(
+        f"This reconciliation currently has EXACTLY {discrepancy_count} final "
+        f"discrepancy item{'' if discrepancy_count == 1 else 's'} across all "
+        "categories. When asked how many discrepancies remain, answer with this "
+        "exact number. If the history mentions a different number, the HISTORY IS "
+        "WRONG — this list is authoritative. Each item carries its stable key, "
+        "date, details, signed amount (canonical convention: Company and Bank "
+        "debit = +, credit = -; Vendor debit = -, credit = +), and source (FROM):"
+    )
     for item in request.discrepancies:
         lines.append(
             f"- [{item.discrepancy_id}] {item.Transaction_date} | "
@@ -243,22 +310,22 @@ def _build_prompt(request: AdvisorReconcileRequest) -> str:
         f"company_balance={request.context.company_balance:+.2f}"
     )
 
-    if request.history:
-        lines.append("\nConversation history:")
-        for message in request.history:
-            lines.append(f"- {message.role}: {message.content}")
-
     if request.question:
         lines.append(
             f"\nThe user asks: {request.question}\n"
-            "Answer concisely in context. You may additionally return "
-            "suggestions for the two supported cases."
+            "Answer using ONLY the AUTHORITATIVE CURRENT DISCREPANCIES above "
+            "(recount from it if the question is about counts/items; ignore any "
+            "older number in the history). You may additionally return "
+            "suggestions across the supported architectures."
         )
     else:
         lines.append(
-            "\nAnalyze the list strictly for the two supported cases "
-            "(broken cheques/pairs and reversals) and return your JSON in the "
-            "required ~~~ [output] ~~~ block."
+            "\nAnalyze the AUTHORITATIVE CURRENT DISCREPANCIES above for all "
+            "supported cases across the three architectures — Company vs Bank "
+            "(broken cheques/pairs, reversals, cross-side pairs), Company vs "
+            "Company (reconcilables found within the Company side) and Bank vs "
+            "Bank (reconcilables found within the Bank side) — and return your "
+            "JSON in the required ~~~ [output] ~~~ block."
         )
 
     return "\n".join(lines)

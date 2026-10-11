@@ -1,0 +1,229 @@
+openapi: 3.0.1
+info:
+  title: Employee Membership & Onboarding API (NextAuth branch)
+  version: 1.0.0
+  description: >
+    Signed-in (Google/NextAuth) surfaces: the membership that gates the application,
+    the leave-company action, the employee access request, and the company onboarding
+    submission. All paths ride the ordinary NextAuth branch of auth_middleware
+    (Bearer = session.user.access_token). The application gate refuses every other
+    application route with 403 membership_required when no accepted membership exists.
+
+servers:
+  - url: http://localhost:8000
+
+security:
+  - nextAuthBearer: []
+
+tags:
+  - name: membership
+  - name: onboarding
+  - name: requests
+
+paths:
+  /api/me/membership:
+    get:
+      tags: [membership]
+      summary: Resolve the signed-in account's company membership
+      description: >
+        Returns the account's accepted membership (company id/name, employee id,
+        is_manager) or null. Used by the frontend to gate pages and render the nav
+        (Leave company; Company Dashboard when a manager).
+      responses:
+        '200':
+          description: Membership resolution.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MembershipResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    delete:
+      tags: [membership]
+      summary: Cancel a pending request, or leave a granted company (hard delete)
+      description: >
+        Deletes the account's employee record. This one operation serves both
+        cancelling a pending request (FR-017) and leaving a granted company
+        (FR-015). The account loses application access and is returned to the
+        subscription layer. The user account itself is untouched.
+      responses:
+        '200':
+          description: Cancelled / left.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DeleteResponse' }
+        '404':
+          description: The account has no membership to leave.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /api/company-requests:
+    post:
+      tags: [onboarding]
+      summary: Submit a company onboarding request
+      description: >
+        Persists a "Company Request" submission for the Admin Dashboard's view-only
+        Company Requests inbox and best-effort sends a notification email to the
+        Developer. The email failing MUST NOT fail the request (FR-006/FR-007).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CompanyRequestCreate' }
+      responses:
+        '201':
+          description: Stored.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CompanyRequest' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /api/employees/requests:
+    post:
+      tags: [requests]
+      summary: Submit an employee access request (existing, tightened)
+      description: >
+        Records a pending request. Now rejects a second request while the account
+        already has an active (pending/accepted) request to ANY company with
+        409 active_request_exists (FR-017/FR-025), in addition to the existing
+        per-(employee_id, company_id) 409 employee_id_taken.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [employee_name, employee_id, company_id]
+              properties:
+                employee_name: { type: string }
+                employee_id: { type: string }
+                company_id: { type: string }
+      responses:
+        '201':
+          description: Recorded.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EmployeeRequestResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404':
+          description: Company not found.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '409':
+          description: >
+            Either active_request_exists (account already has an active request) or
+            employee_id_taken (this ID already requested this company).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /api/companies:
+    get:
+      tags: [requests]
+      summary: Company dropdown (existing)
+      description: Every onboarded company (id, name, logo_url) for the request dialog.
+      responses:
+        '200':
+          description: The company list.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  companies:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: string }
+                        name: { type: string }
+                        logo_url: { type: string, nullable: true }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+components:
+  securitySchemes:
+    nextAuthBearer:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: NextAuth access token (session.user.access_token).
+
+  responses:
+    Unauthorized:
+      description: Missing/invalid/expired session.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    BadRequest:
+      description: Missing/invalid field.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+
+  schemas:
+    Membership:
+      type: object
+      properties:
+        id: { type: string }
+        employee_id: { type: string }
+        employee_name: { type: string }
+        company_id: { type: string }
+        company_name: { type: string }
+        status: { type: string, enum: [accepted] }
+        is_manager: { type: boolean }
+      required: [id, employee_id, company_id, company_name, status, is_manager]
+
+    MembershipResponse:
+      type: object
+      properties:
+        membership: { $ref: '#/components/schemas/Membership', nullable: true }
+      required: [membership]
+
+    CompanyRequestCreate:
+      type: object
+      required: [company_name]
+      properties:
+        company_name: { type: string }
+        role: { type: string }
+        website_socials: { type: string }
+        email: { type: string }
+        phone: { type: string }
+
+    CompanyRequest:
+      type: object
+      properties:
+        id: { type: string }
+        company_name: { type: string }
+        role: { type: string }
+        website_socials: { type: string }
+        email: { type: string }
+        phone: { type: string }
+        submitted_at: { type: string, format: date-time }
+      required: [id, company_name, submitted_at]
+
+    EmployeeRequestResponse:
+      type: object
+      properties:
+        id: { type: string }
+        employee_name: { type: string }
+        employee_id: { type: string }
+        company_id: { type: string }
+        company_name: { type: string }
+        status: { type: string, enum: [pending, accepted, denied] }
+        created_at: { type: string, format: date-time }
+
+    DeleteResponse:
+      type: object
+      properties:
+        success: { type: boolean }
+        message: { type: string }
+
+    Error:
+      type: object
+      properties:
+        error: { type: string }
+        message: { type: string }
+        details: { nullable: true }

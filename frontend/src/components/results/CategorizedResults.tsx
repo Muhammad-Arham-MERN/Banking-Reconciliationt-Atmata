@@ -209,7 +209,13 @@ export function CategorizedResults({
     return categorizedData.reduce((sum, t) => sum + t.displayAmount, 0);
   }, [categorizedData]);
 
-  // Compute adjusted company balance and reconciliation verdict
+  // Compute adjusted company balance and reconciliation verdict.
+  //
+  // Under the finalized canonical signs (contracts/sign-convention.md §2) the
+  // signed net total across all categories is exactly companyClosing −
+  // bankClosing, so adding it to the bank closing balance yields the adjusted
+  // company book balance and keeps the verdict consistent with the displayed
+  // signs (FR-014). No per-surface sign flip is applied here.
   const reconciliationVerdict = useMemo(() => {
     const bankClosing = bankNetTotal?.status === 'found' ? bankNetTotal.value ?? null : null;
     const companyClosing = companyNetTotal?.status === 'found' ? companyNetTotal.value ?? null : null;

@@ -1,9 +1,11 @@
 /** بِسْمِ اللَّهِ الرَّحْمٰنِ الرَّحِيمِ */
 import { auth } from "@/lib/auth";
 import { redirect } from "next/navigation";
+import { requireMembership } from "@/lib/membership";
 import { UploadAIConfig } from "../../components/upload/UploadAIConfig";
 import { ReconciliationTypeProvider } from "../../components/providers/reconciliation-type-provider";
 import { ReconciliationBackground } from "../../components/providers/reconciliation-background";
+import { CloseTabWarning } from "../../components/auth/close-tab-warning";
 
 export const dynamic = "force-dynamic";
 
@@ -11,14 +13,18 @@ export const dynamic = "force-dynamic";
  * /upload-AI route (Istikhraj e Data Ma'a AI)
  * AI-driven reconciliation: upload PDF + Excel, system auto-detects structure.
  * Auth-protected like /upload. Distinct path from /upload (FR-011).
+ * Requires a company-granted membership (FR-009) — a no-grant account is sent
+ * to the subscription page; the server also refuses the API directly.
  */
 export default async function UploadAIPage() {
   const session = await auth();
   if (!session) redirect("/");
+  await requireMembership();
 
   return (
     <ReconciliationTypeProvider>
       <ReconciliationBackground>
+        <CloseTabWarning />
         <main
           className="py-8 px-4 sm:py-12 sm:px-6 lg:px-8"
           role="main"

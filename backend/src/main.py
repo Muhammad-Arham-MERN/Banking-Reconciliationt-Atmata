@@ -127,7 +127,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=[origin.strip() for origin in settings.CORS_ORIGINS.split(",") if origin.strip()],
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
 
@@ -168,6 +168,14 @@ from src.api.routes import router as api_router
 from src.api.ai_routes import router as ai_router
 from src.api.cloud_routes import router as cloud_router
 from src.api.advisor_routes import router as advisor_router
+from src.api.admin_routes import router as admin_router
+from src.api.company_routes import router as company_router
+from src.api.company_auth_routes import router as company_auth_router
+from src.api.company_employee_routes import router as company_employee_router
+from src.api.company_trial_routes import router as company_trial_router
+from src.api.company_requests_routes import router as company_requests_router
+from src.api.employee_routes import router as employee_router
+from src.api.me_routes import router as me_router
 from src.api.middleware import rate_limit_middleware, security_middleware
 from src.api.auth_middleware import auth_middleware
 
@@ -176,6 +184,14 @@ app.include_router(api_router, tags=["api"])
 app.include_router(ai_router, tags=["ai"])
 app.include_router(cloud_router)
 app.include_router(advisor_router, tags=["advisor"])
+app.include_router(admin_router)
+app.include_router(company_router)
+app.include_router(company_auth_router)
+app.include_router(company_employee_router)
+app.include_router(company_trial_router)
+app.include_router(company_requests_router)
+app.include_router(employee_router)
+app.include_router(me_router)
 
 # Add security middleware (order: auth first, then security, then rate-limit)
 app.middleware("http")(auth_middleware)

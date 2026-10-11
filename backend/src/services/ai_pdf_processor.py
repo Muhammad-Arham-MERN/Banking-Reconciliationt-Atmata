@@ -359,6 +359,7 @@ class AIPDFProcessor:
         df: pd.DataFrame,
         columns: List[str],
         structure: Optional[FileStructureOutput] = None,
+        reconciliation_type: str = "bank",
     ) -> List[Dict[str, Any]]:
         """Transform the extracted DataFrame to standardized transactions.
 
@@ -369,11 +370,18 @@ class AIPDFProcessor:
         No name guessing - a role the agent did not name is left None and the
         row is skipped with a warning rather than mapped to the wrong column.
 
+        ``reconciliation_type`` selects the finalized statement-side sign: a
+        "bank" statement is debit +/credit - (flip_sign=True); anything else
+        (a vendor ledger) keeps debit -/credit + (see contracts/sign-convention.md).
+
         When `structure` is omitted (legacy callers), falls back to the
         previous substring-based role detection so existing behavior is kept.
         """
         if df.empty:
             return []
+
+        # Bank statements invert the merged sign; vendor ledgers do not.
+        flip_sign = reconciliation_type != "vendor"
 
         if structure is not None:
             date_col = structure.pdf_transaction_date_column or (columns[0] if columns else None)
@@ -407,8 +415,10 @@ class AIPDFProcessor:
                 detail_value = row.get(detail_col) if detail_col else None
 
                 if combined_col is not None:
-                    # Combined Debit/Credit column: the cell already carries
-                    # its sign (negative = debit, positive = credit).
+                    # Combined Debit/Credit column: the cell carries its own
+                    # printed ledger sign (bank statements print debit as
+                    # negative / credit as positive); it is channeled through
+                    # the same flip as the separate-column path via 'auto'.
                     amount_value = row.get(combined_col)
                     debit_value = None
                     credit_value = None
@@ -425,6 +435,7 @@ class AIPDFProcessor:
                     debit_value=debit_value,
                     credit_value=credit_value,
                     source_type="pdf",
+                    flip_sign=flip_sign,
                 )
                 if transaction:
                     standardized.append(transaction)
@@ -438,6 +449,7 @@ class AIPDFProcessor:
         self,
         pdf_path: Path,
         structure: FileStructureOutput,
+        reconciliation_type: str = "bank",
     ) -> Dict[str, Any]:
         """Complete AI PDF processing pipeline: extract + transform.
 
@@ -449,7 +461,10 @@ class AIPDFProcessor:
 
         df = self.extract_bank_statement(pdf_path, structure)
         bank_net_total = _extract_balance(df, structure)
-        standardized = self.transform_to_standard_format(df, structure.columns_pdf, structure)
+        standardized = self.transform_to_standard_format(
+            df, structure.columns_pdf, structure,
+            reconciliation_type=reconciliation_type,
+        )
 
         processing_time_ms = int((time.time() - start_time) * 1000)
 

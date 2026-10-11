@@ -28,6 +28,7 @@ from agents.tracing import set_tracing_disabled, set_tracing_export_api_key
 from pydantic import BaseModel
 
 from src.config import settings
+from src.services import progress_events
 from src.services.judge_structure_service import build_judge_tool
 from src.services.pdf_structure_store import upsert_profile
 from src.utils.structure_assessor import assess_pdf_structure
@@ -474,6 +475,11 @@ def build_agent_tools(
                       debt the vendor owes you, i.e. negative, and a debit as
                       money you owe, i.e. positive), so the signed amount is
                       debit - credit.
+        This is the statement's BALANCE-MOVEMENT sign used only for the
+        arithmetic check below. It is deliberately independent of (and for a
+        bank opposite to) the app's canonical WIRE row sign - Bank/Company
+        Debit = +, Credit = -; Vendor Debit = -, Credit = +
+        (contracts/sign-convention.md §2) - so do not conflate the two.
         The statement's Cumulative Balance column is compared directly, so
         only the sign applied to the two amount columns flips between the two
         types. A structure that passes as "bank" will FAIL as "vendor" (and
@@ -579,6 +585,23 @@ def build_agent_tools(
                         "the header."
                     ],
                 }
+            )
+
+        # Live progress: when the judge found a known structure for this bank/
+        # vendor, say we are re-validating it (in addition to the assessor's
+        # own event, which always fires from the tool-call observer).
+        if (
+            request_id
+            and verdict_holder is not None
+            and verdict_holder.get("judge_found_structure") is True
+        ):
+            progress_events.emit_stage(
+                request_id,
+                "assessing_known_structure",
+                "Found some existing data, assessing it",
+                sentiment="positive",
+                emoji="🔎",
+                progress_delta=3,
             )
 
         assessment = assess_pdf_structure(
@@ -689,6 +712,10 @@ def build_agent_tools(
             pdf_path,
             reconciliation_type=reconciliation_type,
             request_id=request_id,
+            # The shared holder the assess_structure tool + output guardrail
+            # also use; the judge's extractor records judge_found_structure on
+            # it so the assessor can emit its extra "known structure" event.
+            state_holder=verdict_holder,
         ),
         read_excel,
         read_pdf,
@@ -751,7 +778,7 @@ How is ths achieved? You have 5 tools for reading pdf and excel and evaluating r
     * If page 1 and page 2 have the SAME header line top and SAME first-data-row top, emit band_top_pdf and header_top_pdf as SINGLE scalar numbers (this is the standard case).
     * If they DIFFER (e.g. page 1 has an account header block above the table, page 2 starts straight at the table), emit each as a 2-element list: [page1_value, page2_value]. Page 2's value is the canonical structure for all continuation pages (pages 3+ reuse page 2's value automatically).
   - Identify the Opening Balance: the figure from which debits are subtracted and to which credits are added (it may be labelled "Opening Balance", "B/F", "Balance Brought Forward", "Balance at Period Start", "Ledger", etc.). It is usually found in the UPPER part of page 1 - around the header block, near the top, just above or near the first data rows - but do NOT assume it is exactly the first row of the table or only in the header block. Look dynamically in the upper region of the page (header area and the lines just above/between the header and the first rows) for any figure labelled as an opening/start balance, and pass what you find to the assess_structure tool and emit it as opening_balance_pdf. If none exists, omit it (use null) - the assessor will still run the arithmetic checks and auto-verify the balance against the first cumulative row.
-  - VALIDATE with assess_structure: BEFORE emitting your final output block, call the assess_structure tool with your proposed structure, the opening balance, and the reconciliation type ("bank" or "vendor"). It scores your structure THREE ways: (1) SAGHIR re-runs the extractor and checks the statement's own arithmetic (running balance vs the Cumulative Balance column on every row that prints a balance - sparse balances supported; in a "bank" statement Credit is + and Debit is -; in a "vendor" ledger the roles invert (Credit -, Debit +). Pick the type that matches the file - if you choose the wrong one, the running balance will diverge and you must switch it. (2) KABIR independently counts the raw dated rows of the PDF (no band/header clipping) and compares them against your structure's row count - it catches structures that silently drop whole pages, which Saghir cannot see. (3) IHSAN (final gate, runs only after Saghir AND Kabir pass) reads the statement's printed CLOSING BALANCE from the tail pages and checks opening + net change against it - this catches a dropped final-day group that Saghir and Kabir both miss. If 'overall_pass' is false, read 'issues'/'suggestions'/'cumulative_check.first_mismatch_row'/'kabir_check' (tier, diff_pct, dated_leftovers)/'ihsan_check' (closing_balance, diff, page), fix your structure (band_top, boundaries, column order, opening balance, or reconciliation type), and call assess_structure again. Only emit the output block once assess_structure returns overall_pass: true (or a non-perfect score with no arithmetic failure).
+  - VALIDATE with assess_structure: BEFORE emitting your final output block, call the assess_structure tool with your proposed structure, the opening balance, and the reconciliation type ("bank" or "vendor"). It scores your structure THREE ways: (1) SAGHIR re-runs the extractor and checks the statement's own arithmetic (running balance vs the Cumulative Balance column on every row that prints a balance - sparse balances supported; in a "bank" statement the balance rises on a credit and falls on a debit; in a "vendor" ledger the roles invert (this balance-movement sign is distinct from the canonical wire row sign - Bank/Company Debit = +, Credit = -; Vendor Debit = -, Credit = +). Pick the type that matches the file - if you choose the wrong one, the running balance will diverge and you must switch it. (2) KABIR independently counts the raw dated rows of the PDF (no band/header clipping) and compares them against your structure's row count - it catches structures that silently drop whole pages, which Saghir cannot see. (3) IHSAN (final gate, runs only after Saghir AND Kabir pass) reads the statement's printed CLOSING BALANCE from the tail pages and checks opening + net change against it - this catches a dropped final-day group that Saghir and Kabir both miss. If 'overall_pass' is false, read 'issues'/'suggestions'/'cumulative_check.first_mismatch_row'/'kabir_check' (tier, diff_pct, dated_leftovers)/'ihsan_check' (closing_balance, diff, page), fix your structure (band_top, boundaries, column order, opening balance, or reconciliation type), and call assess_structure again. Only emit the output block once assess_structure returns overall_pass: true (or a non-perfect score with no arithmetic failure).
 
 YOUR OUTPUT (follow this contract EXACTLY). These values feed a deterministic extractor (extract_pdf) directly - ALL of them are mandatory:
   - columns_pdf: The list of all pdf columns
@@ -1018,10 +1045,11 @@ async def detect_structure(
         max_attempts: Max LLM-failure retries (FR-008, default 3).
         max_guardrail_retries: Max times the output guardrail may trip before
             giving up (default 3).
-        request_id: If provided, the run is registered in the processing
-            cancellation registry so the client can halt it mid-run; a cancel
-            request stops the current LLM turn immediately via
-            RunResultStreaming.cancel().
+        request_id: If provided, cancellation is honored throughout detection
+            (is_cancelled is checked per attempt / per stream event), and live
+            progress events are emitted to the route-owned progress bus. The
+            run registry itself is owned by ai_routes.reconcile_ai so the whole
+            pipeline stays cancellable.
         reconciliation_type: "bank" (default) or "vendor" - which books the
             statement belongs to; becomes the default the agent starts from
             when calling assess_structure (FR-006).
@@ -1036,8 +1064,6 @@ async def detect_structure(
     """
     from src.services.processing_cancellation import (
         is_cancelled,
-        register_run,
-        unregister_run,
         update_cancel_handle,
     )
 
@@ -1050,9 +1076,6 @@ async def detect_structure(
     # Shared dict: the assess_structure tool records its last verdict here;
     # the output guardrail reads it (its ONLY input is the tool's pass/fail).
     verdict_holder: dict = {}
-
-    if request_id:
-        register_run(request_id)
 
     try:
         for guardrail_attempt in range(max_guardrail_retries + 1):
@@ -1114,11 +1137,14 @@ async def detect_structure(
                     # Consume the stream to completion (final_output becomes
                     # available only after the stream finishes). Output
                     # guardrails run at the end; a tripwire raises
-                    # OutputGuardrailTripwireTriggered here.
+                    # OutputGuardrailTripwireTriggered here. We also watch the
+                    # stream for tool calls to drive live progress events.
                     async for _event in stream.stream_events():
                         if request_id and is_cancelled(request_id):
                             stream.cancel()
                             raise asyncio.CancelledError("Processing cancelled by user")
+
+                        _observe_tool_event(request_id, _event)
 
                     final_output = stream.final_output or ""
                 except asyncio.CancelledError:
@@ -1132,6 +1158,14 @@ async def detect_structure(
                     last_tripwire = tw
                     last_stream = stream
                     last_error = tw
+                    progress_events.emit_stage(
+                        request_id,
+                        "assessor_failed",
+                        "Agent's produced output failed assessment, agent re-evaluating structure",
+                        sentiment="negative",
+                        emoji="🔄",
+                        progress_delta=6,
+                    )
                     logger.warning(
                         "Output guardrail tripwire on guardrail attempt %d: %s",
                         guardrail_attempt + 1,
@@ -1150,6 +1184,14 @@ async def detect_structure(
                     # agent's last message + all prior tool calls/outputs).
                     last_stream = stream
                     last_error = e
+                    progress_events.emit_stage(
+                        request_id,
+                        "llm_retry",
+                        "Agent Model had some Trouble retrying",
+                        sentiment="neutral",
+                        emoji="🤔",
+                        progress_delta=0,
+                    )
                     logger.warning("AI structure detection attempt %d failed: %s", attempt, e)
                     continue
 
@@ -1159,6 +1201,23 @@ async def detect_structure(
                     # block, which parse_output_block then consumes. Uses a normal
                     # Runner.run (no stream). Only reached when the guardrail did
                     # NOT trip (the output is validated).
+                    # Live progress: the assessor accepted the structure.
+                    progress_events.emit_stage(
+                        request_id,
+                        "assessor_passed",
+                        "Agent's produced Output Assessment Passed",
+                        sentiment="positive",
+                        emoji="✅",
+                        progress_delta=8,
+                    )
+                    progress_events.emit_stage(
+                        request_id,
+                        "output_parsing",
+                        "Agent Finalizing Output for System to Generate Reconciliation",
+                        sentiment="positive",
+                        emoji="📝",
+                        progress_delta=6,
+                    )
                     output_agent = build_output_agent()
                     result = await Runner.run(
                         output_agent,
@@ -1193,8 +1252,11 @@ async def detect_structure(
             if guardrail_attempt >= max_guardrail_retries:
                 break
     finally:
-        if request_id:
-            unregister_run(request_id)
+        # NOTE: the run registry + progress bus are owned by the ROUTE
+        # (ai_routes.reconcile_ai) so cancellation and live progress keep
+        # working through extraction + reconciliation. Nothing to unregister
+        # here.
+        pass
 
     if last_tripwire is not None:
         # Guardrail retries exhausted - the agent never produced a structure
@@ -1209,6 +1271,75 @@ async def detect_structure(
         retries_used=max_attempts,
         reason="llm_failed",
     ) from last_error
+
+
+# وَهُوَ عَلَى كُلِّ شَيْءٍ قَدِيرٌ
+# Tool name -> (stage key, message, sentiment, emoji, progress_delta) shown to
+# the user as the agent works. Sentiment drives the circular gauge: positive
+# increases it, negative decreases it, neutral leaves it unchanged.
+_TOOL_STAGE_MAP = {
+    "judge_structure_by_cover": (
+        "history_check",
+        "Subagent checking history for Help",
+        "neutral",
+        "🔍",
+        0,
+    ),
+    "read_pdf": (
+        "reading_pdf",
+        "Agent is reading PDF File",
+        "positive",
+        "📄",
+        6,
+    ),
+    "read_excel": (
+        "reading_excel",
+        "Agent is reading Excel File",
+        "positive",
+        "📊",
+        6,
+    ),
+    "read_pdf_words": (
+        "studying_pdf",
+        "Agent is studying PDF for extraction",
+        "positive",
+        "📐",
+        6,
+    ),
+    "assess_structure": (
+        "evaluating",
+        "Agent evaluating its Results",
+        "positive",
+        "🧪",
+        6,
+    ),
+}
+
+
+def _observe_tool_event(request_id: Optional[str], _event) -> None:
+    """Watch the agent stream for tool-CALL events and emit the matching
+    live-progress stage.
+
+    We only react to the "tool_called" event name (a ToolCallItem carrying the
+    tool name on .tool_name). The judge's RESULT (found/none) is NOT detected
+    here: it is detected deterministically inside the judge tool's own
+    custom_output_extractor (judge_structure_service.build_judge_tool), where
+    the tool identity is known by construction. Tool-output items carry no tool
+    name in this SDK, so sniffing them from the parent stream is unreliable.
+    """
+    if not request_id:
+        return
+    event_type = getattr(_event, "type", None)
+    if event_type != "run_item_stream_event":
+        return
+    name = getattr(_event, "name", None)
+    if name != "tool_called":
+        return
+    item = getattr(_event, "item", None)
+    tool_name = getattr(item, "tool_name", None)
+    if tool_name in _TOOL_STAGE_MAP:
+        key, message, sentiment, emoji, delta = _TOOL_STAGE_MAP[tool_name]
+        progress_events.emit_stage(request_id, key, message, sentiment, emoji, delta)
 
 
 # وَهُوَ عَلَى كُلِّ شَيْءٍ قَدِيرٌ

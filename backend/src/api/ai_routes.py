@@ -22,6 +22,7 @@ Design decisions (from research.md + contracts/api-contract.md):
 """
 
 import asyncio
+import json
 import logging
 import time
 import uuid
@@ -29,6 +30,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Form, HTTPException, Request, UploadFile
+from fastapi.responses import StreamingResponse
 
 from src.api.routes import cleanup_uploaded_files, save_upload_file
 from src.config import settings
@@ -46,7 +48,9 @@ from src.services.processing_cancellation import (
     cancel_run,
     is_cancelled,
     register_run,
+    unregister_run,
 )
+from src.services import progress_events
 from src.utils.file_helpers import validate_upload_file
 from src.utils.logger import (
     log_processing_start,
@@ -114,8 +118,10 @@ async def reconcile_ai(
     request_id = (requestId or "").strip() or str(uuid.uuid4())
     log_processing_start(logger, request_id, bankStatement.filename, companyData.filename)
 
-    # Register the run so the frontend can cancel it (page reload / Stop button).
+    # Register the run so the frontend can cancel it (page reload / Stop button),
+    # and start the per-request progress bus the sidecar SSE route reads from.
     register_run(request_id)
+    progress_events.start_progress(request_id)
 
     pdf_path = None
     excel_path = None
@@ -150,9 +156,27 @@ async def reconcile_ai(
             )
         log_file_validation(logger, request_id, companyData.filename or "", "excel", True)
 
+        progress_events.emit_stage(
+            request_id,
+            "upload_done",
+            "File upload successful",
+            sentiment="positive",
+            emoji="📤",
+            progress_delta=8,
+        )
+
         # ---- AI structure detection: ONE agent run for both files (FR-019) ----
         processing_start = time.time()
         detection_start = time.time()
+
+        progress_events.emit_stage(
+            request_id,
+            "agent_ready",
+            "Agent Ready For Processing",
+            sentiment="positive",
+            emoji="🤖",
+            progress_delta=6,
+        )
 
         sheet_name = sheetName.strip() or "Sheet1"
         rec_type = reconciliationType.strip() or "bank"
@@ -182,7 +206,7 @@ async def reconcile_ai(
         pdf_processor = AIPDFProcessor(request_id)
         excel_processor = AIExcelProcessor(request_id)
 
-        pdf_task = asyncio.to_thread(pdf_processor.process_pdf, pdf_path, structure)
+        pdf_task = asyncio.to_thread(pdf_processor.process_pdf, pdf_path, structure, rec_type)
         excel_task = asyncio.to_thread(excel_processor.process_excel, excel_path, structure, sheet_name)
 
         (pdf_result, excel_result), (pdf_error, excel_error) = await _gather_extraction(pdf_task, excel_task)
@@ -238,6 +262,9 @@ async def reconcile_ai(
                 ),
             }
             log_processing_complete(logger, request_id, None, None, 0, 0, 0)
+            progress_events.emit_status(
+                request_id, "error", f"Could not process the {failed_file} file"
+            )
             return partial_response
 
         # ---- Full success: reconcile (FR-007) ----
@@ -253,6 +280,15 @@ async def reconcile_ai(
                     "details": {"request_id": request_id},
                 },
             )
+
+        progress_events.emit_stage(
+            request_id,
+            "reconcile_start",
+            "Reconciliation starts, just wait a bit more",
+            sentiment="positive",
+            emoji="⚖️",
+            progress_delta=10,
+        )
 
         reconciliation_service = ReconciliationService()
         discrepancies = reconciliation_service.reconcile(bank_transactions, company_transactions)
@@ -275,7 +311,8 @@ async def reconcile_ai(
 
         bank_only = sum(1 for d in discrepancies if d.get("FROM") == "Bank")
         company_only = sum(1 for d in discrepancies if d.get("FROM") == "Company")
-        opposite_pairs_removed = (len(bank_transactions) + len(company_transactions) - len(discrepancies)) // 2
+        # Number of cross-source pairs cancelled by the matcher itself.
+        opposite_pairs_removed = reconciliation_service.matched_pairs_removed
 
         total_processing_time_ms = int((time.time() - processing_start) * 1000)
 
@@ -339,6 +376,17 @@ async def reconcile_ai(
             len(company_transactions),
         )
 
+        # Live-progress: tell the SSE consumer the run completed successfully.
+        progress_events.emit_stage(
+            request_id,
+            "done",
+            "Done",
+            sentiment="positive",
+            emoji="✅",
+            progress_delta=0,
+        )
+        progress_events.emit_status(request_id, "done", "Reconciliation complete")
+
         return response
 
     except HTTPException:
@@ -348,6 +396,7 @@ async def reconcile_ai(
         # is a BaseException, so it bypasses `except Exception`; surface it as
         # the same 499 the inter-stage checks use.
         logger.info("Run %s cancelled by user", request_id)
+        progress_events.emit_status(request_id, "cancelled", "Processing cancelled by user")
         raise HTTPException(
             status_code=499,
             detail={
@@ -374,9 +423,11 @@ async def reconcile_ai(
                 "details": {"retries_used": e.retries_used, "error": str(e)},
             }
         logger.error("AI structure detection failed: %s", detail)
+        progress_events.emit_status(request_id, "error", detail["message"])
         raise HTTPException(status_code=422, detail=detail)
     except Exception as e:
         logger.error(f"Unexpected error in /reconcile-ai: {e}")
+        progress_events.emit_status(request_id, "error", FRIENDLY_RETRY_MESSAGE)
         raise HTTPException(
             status_code=422,
             detail={
@@ -386,12 +437,66 @@ async def reconcile_ai(
             },
         )
     finally:
-        # Unregister the run so it can no longer be cancelled.
-        from src.services.processing_cancellation import unregister_run
-
+        # Unregister the run (no longer cancellable) and stop the progress bus
+        # so the sidecar SSE generator can exit. Guaranteed cleanup (FR-014).
         unregister_run(request_id)
-        # Guaranteed cleanup (FR-014)
+        progress_events.stop_progress(request_id)
         await cleanup_uploaded_files(pdf_path, excel_path)
+
+
+# وَهُوَ عَلَى كُلِّ شَيْءٍ قَدِيرٌ
+@router.post("/reconcile-ai/{request_id}/events")
+async def reconcile_ai_events(request: Request, request_id: str):
+    """SSE sidecar: live progress events for an in-flight /reconcile-ai run.
+
+    The main /reconcile-ai POST still returns its normal JSON result; this
+    route is opened in parallel by the frontend (same client-generated
+    request_id) and streams stage/status frames from the per-request progress
+    bus started by reconcile_ai(). Kept auth-protected like the main endpoint.
+    """
+    # Sanity: ensure the request_id actually maps to a live run so we 404 fast
+    # on bogus ids rather than streaming nothing.
+    from src.services.processing_cancellation import is_active
+
+    if not is_active(request_id):
+        raise HTTPException(status_code=404, detail="No active reconciliation run for this id")
+
+    async def event_stream():
+        queue = progress_events.get_queue(request_id)
+        if queue is None:
+            yield f"data: {json.dumps({'type': 'status', 'state': 'done', 'message': 'Run already finished'})}\n\n"
+            return
+        try:
+            while True:
+                try:
+                    event = await asyncio.wait_for(queue.get(), timeout=15.0)
+                except asyncio.TimeoutError:
+                    # Keep-alive: no event for 15s but the run is still active.
+                    yield ": ping\n\n"
+                    continue
+                if event == "__closed__":
+                    break
+                yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+                # Terminal frames end the stream.
+                if event.get("type") == "status":
+                    break
+        except asyncio.CancelledError:
+            # Client disconnected (Stop button / tab close). The run itself is
+            # cancelled via the /cancel endpoint; just end this stream.
+            raise
+        finally:
+            # Consumer gone; nothing to clean up (the queue is owned by the route).
+            pass
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        },
+    )
 
 
 # وَهُوَ عَلَى كُلِّ شَيْءٍ قَدِيرٌ
@@ -458,7 +563,9 @@ def _merge_past_discrepancies(current: list, past: list) -> list:
                 "Transaction_date": p.get("transaction_date"),
                 "Transaction Detail": p.get("transaction_details"),
                 "Debit/Credit": p.get("debit_credit_amount"),
-                "FROM": "Bank" if p.get("category") and "Bank" in p.get("category") else "Company",
+                # Vendor category labels carry the source-side (statement) rows,
+                # so map them to "Bank" (the source slot) — never "Company".
+                "FROM": "Bank" if p.get("category") and ("Bank" in p.get("category") or "Vendor" in p.get("category")) else "Company",
                 "from_past": True,
             }
         )

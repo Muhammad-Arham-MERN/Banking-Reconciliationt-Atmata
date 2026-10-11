@@ -88,10 +88,12 @@ export const cloudHistoryClient = {
     token: string,
     fileName: string,
     fileData: CloudHistoryEntry[],
+    reconciliationType: PastFileReconciliationType = 'bank',
   ): Promise<SaveCloudFileResponse> {
     const body: SaveCloudFileRequest = {
       file_name: fileName,
       file_data: fileData,
+      reconciliation_type: reconciliationType,
     };
 
     const response = await fetch(`${API_BASE_URL}/api/cloud/save_files_cloud`, {

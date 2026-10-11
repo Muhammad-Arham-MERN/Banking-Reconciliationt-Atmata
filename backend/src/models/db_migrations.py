@@ -114,6 +114,138 @@ CREATE INDEX IF NOT EXISTS idx_pdf_structure_profile_type
 ON pdf_structure_profiles(entity_type);
 """
 
+# ---- Admin Dashboard (Camri Desk) — client companies -----------------------
+# Companies onboarded by the Developer from the hidden admin dashboard. This is
+# a brand-new domain: no link to `users` (the company-facing login and its
+# employee membership are later specs). `password_encrypted` holds a Fernet
+# token — the plaintext password is never stored. `payment_status` is constrained
+# at the DB level so an out-of-range value can never be persisted.
+CREATE_COMPANIES = """
+CREATE TABLE IF NOT EXISTS companies (
+    id                 SERIAL PRIMARY KEY,
+    name               VARCHAR(255) NOT NULL,
+    logo_filename      VARCHAR(255),
+    password_encrypted TEXT         NOT NULL,
+    price_rupees       INTEGER      NOT NULL,
+    payment_status     VARCHAR(16)  NOT NULL DEFAULT 'pending',
+    created_at         TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    updated_at         TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    CONSTRAINT chk_company_payment_status
+        CHECK (payment_status IN ('pending', 'free_trial', 'paid')),
+    CONSTRAINT chk_company_price_non_negative
+        CHECK (price_rupees >= 0)
+);
+"""
+
+# Case-insensitive uniqueness: the company name doubles as the company's
+# identifier for the later company-facing sign-in, so "Acme Ltd" and "acme ltd"
+# must not both exist.
+CREATE_UQ_COMPANY_NAME_LOWER = """
+CREATE UNIQUE INDEX IF NOT EXISTS uq_company_name_lower
+ON companies (lower(name));
+"""
+
+# ---- Employee Access Request (subscription layer) --------------------------
+# Employees who asked a company to grant them access, submitted from the
+# subscription page. A dedicated record set, separate from `companies` and from
+# the NextAuth `users` accounts. `employee_id` is the `adam-` prefixed handle the
+# employee hands to the company; uniqueness is per (employee_id, company_id), so
+# one employee may request several companies but never the same one twice.
+# `company_name` is a snapshot so the record still reads correctly after a
+# rename — and there is deliberately NO foreign key, so the admin's hard delete
+# of a company keeps working. The prefix CHECK is the DB-level backstop.
+CREATE_EMPLOYEES = """
+CREATE TABLE IF NOT EXISTS employees (
+    id              SERIAL       PRIMARY KEY,
+    employee_name   VARCHAR(255) NOT NULL,
+    employee_id     VARCHAR(64)  NOT NULL,
+    company_id      INTEGER      NOT NULL,
+    company_name    VARCHAR(255) NOT NULL,
+    account_user_id INTEGER      NOT NULL,
+    account_email   VARCHAR(255) NOT NULL DEFAULT '',
+    status          VARCHAR(16)  NOT NULL DEFAULT 'pending',
+    created_at      TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    updated_at      TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    CONSTRAINT chk_employee_status
+        CHECK (status IN ('pending', 'accepted', 'denied')),
+    CONSTRAINT chk_employee_id_prefix
+        CHECK (employee_id LIKE 'adam-%')
+);
+"""
+
+# The employee id is stored already lowercased and prefixed, so a plain
+# (non-expression) index is enough. Enforcing this in the database rather than
+# only in the service means a concurrent second submit cannot slip a duplicate
+# through without a transaction.
+CREATE_UQ_EMPLOYEE_ID_COMPANY = """
+CREATE UNIQUE INDEX IF NOT EXISTS uq_employee_id_company
+ON employees (employee_id, company_id);
+"""
+
+# ---- Company onboarding requests (view-only admin inbox) --------------------
+# A "Company Request" submission from the onboarding flow. Stored purely so the
+# Developer can read it in the Admin Dashboard's "Company Requests" category;
+# it has NO status lifecycle and NO link to company account creation (companies
+# are still onboarded manually after the Developer contacts them). The
+# account_* columns are informational snapshots of the signed-in submitter.
+CREATE_COMPANY_REQUESTS = """
+CREATE TABLE IF NOT EXISTS company_requests (
+    id              SERIAL       PRIMARY KEY,
+    company_name    VARCHAR(255) NOT NULL,
+    role            VARCHAR(255) NOT NULL DEFAULT '',
+    website_socials VARCHAR(255) NOT NULL DEFAULT '',
+    email           VARCHAR(255) NOT NULL DEFAULT '',
+    phone           VARCHAR(64)  NOT NULL DEFAULT '',
+    account_user_id INTEGER,
+    account_email   VARCHAR(255) NOT NULL DEFAULT '',
+    submitted_at    TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+);
+"""
+
+# Newest-first listing is the admin inbox's only read pattern.
+CREATE_IDX_COMPANY_REQUESTS_SUBMITTED_AT = """
+CREATE INDEX IF NOT EXISTS idx_company_requests_submitted_at
+ON company_requests (submitted_at DESC);
+"""
+
+# ---- Manager flag on employee records ---------------------------------------
+# The Manager designation is additive: it only surfaces the "Company Dashboard"
+# navigation entry for an account that already holds accepted employee access
+# (FR-019/FR-020). It never grants application access on its own.
+ALTER_EMPLOYEES_ADD_IS_MANAGER = """
+ALTER TABLE employees ADD COLUMN IF NOT EXISTS is_manager BOOLEAN NOT NULL DEFAULT false;
+"""
+
+# Serves the membership gate and the "one active request per account" lookup.
+CREATE_IDX_EMPLOYEES_ACCOUNT_USER_ID = """
+CREATE INDEX IF NOT EXISTS idx_employees_account_user_id
+ON employees (account_user_id);
+"""
+
+# Serves the company dashboard employee list and the company-delete cascade.
+CREATE_IDX_EMPLOYEES_COMPANY_ID = """
+CREATE INDEX IF NOT EXISTS idx_employees_company_id
+ON employees (company_id);
+"""
+
+# ---- Free-trial access window on company records ----------------------------
+# The Developer assigns a free-trial window [trial_from, trial_to] from the
+# Admin Dashboard; the company activates it by clicking Start, which stamps
+# trial_started_at. A company whose trial is not active (never assigned, never
+# started, or past trial_to) cannot let its employees use the application
+# (enforced in auth_middleware via the membership lookup).
+ALTER_COMPANIES_ADD_TRIAL_FROM = """
+ALTER TABLE companies ADD COLUMN IF NOT EXISTS trial_from DATE;
+"""
+
+ALTER_COMPANIES_ADD_TRIAL_TO = """
+ALTER TABLE companies ADD COLUMN IF NOT EXISTS trial_to DATE;
+"""
+
+ALTER_COMPANIES_ADD_TRIAL_STARTED_AT = """
+ALTER TABLE companies ADD COLUMN IF NOT EXISTS trial_started_at TIMESTAMPTZ;
+"""
+
 # Ordered migration statements
 MIGRATIONS: List[str] = [
     CREATE_USERS,
@@ -128,6 +260,18 @@ MIGRATIONS: List[str] = [
     CREATE_PDF_STRUCTURE_PROFILES,
     CREATE_UQ_PDF_STRUCTURE_PROFILE,
     CREATE_IDX_PDF_STRUCTURE_PROFILE_TYPE,
+    CREATE_COMPANIES,
+    CREATE_UQ_COMPANY_NAME_LOWER,
+    CREATE_EMPLOYEES,
+    CREATE_UQ_EMPLOYEE_ID_COMPANY,
+    CREATE_COMPANY_REQUESTS,
+    CREATE_IDX_COMPANY_REQUESTS_SUBMITTED_AT,
+    ALTER_EMPLOYEES_ADD_IS_MANAGER,
+    CREATE_IDX_EMPLOYEES_ACCOUNT_USER_ID,
+    CREATE_IDX_EMPLOYEES_COMPANY_ID,
+    ALTER_COMPANIES_ADD_TRIAL_FROM,
+    ALTER_COMPANIES_ADD_TRIAL_TO,
+    ALTER_COMPANIES_ADD_TRIAL_STARTED_AT,
 ]
 
 # وَإِنَّ اللَّهَ لَهُوَ خَيْرُ الرَّازِقِينَ

@@ -1,10 +1,10 @@
 /* بِسْمِ اللَّهِ الرَّحْمٰنِ الرَّحِيمِ */
 /**
- * CloseTabWarning (feature 008, feature 1) — a global beforeunload guard.
+ * CloseTabWarning — a beforeunload guard for the AI reconciliation page.
  *
- * Mounted once in the root layout so closing / reloading the tab always shows
- * the browser's "Leave site?" popup, regardless of whether the user is on the
- * home page, mid AI processing, or viewing the final reconciliation list.
+ * Mounted on /upload-ai so closing / reloading the tab shows the browser's
+ * native "Leave site?" confirmation, preventing an accidental close from
+ * discarding an in-progress reconciliation.
  */
 
 'use client';

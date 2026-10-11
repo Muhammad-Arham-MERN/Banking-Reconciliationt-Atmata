@@ -11,6 +11,7 @@ class SaveReconciliationRequest(BaseModel):
     """POST /api/cloud/save request body."""
     file_name: str = Field(..., min_length=1, max_length=255)
     file_data: list[dict[str, Any]] = Field(..., min_length=0)
+    reconciliation_type: Literal["bank", "vendor"] = "bank"
 
 
 class FileListResponse(BaseModel):

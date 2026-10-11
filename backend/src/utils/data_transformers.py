@@ -313,23 +313,38 @@ def normalize_excel_date(date_value: Any) -> Optional[str]:
         return None
 
 
-def merge_debit_credit(debit_value: Optional[float], credit_value: Optional[float]) -> Optional[float]:
+# وَهُوَ عَلَى كُلِّ شَيْءٍ قَدِيرٌ
+def merge_debit_credit(
+    debit_value: Optional[float],
+    credit_value: Optional[float],
+    flip_sign: bool = False,
+) -> Optional[float]:
     """
-    Merge separate debit and credit columns into single Debit/Credit value
-    Debit: negative float, Credit: positive float
+    Merge separate debit and credit columns into a single Debit/Credit value
+    for a STATEMENT-side ledger (bank statement or vendor ledger).
+
+    Finalized canonical convention (contracts/sign-convention.md §2):
+        Bank:   Debit = positive, Credit = negative
+        Vendor: Debit = negative, Credit = positive
+
+    This function produces the VENDOR polarity (debit -abs, credit +abs); pass
+    ``flip_sign=True`` for a BANK statement to invert it to the bank polarity.
 
     Args:
         debit_value: Debit amount (can be None/NaN)
         credit_value: Credit amount (can be None/NaN)
+        flip_sign: Invert the produced sign (bank statements).
 
     Returns:
-        Float amount (negative=debit, positive=credit) or None if invalid
+        Float amount, or None if invalid.
 
     Examples:
         >>> merge_debit_credit(100.50, None)
         -100.50
         >>> merge_debit_credit(None, 25.75)
         25.75
+        >>> merge_debit_credit(100.50, None, flip_sign=True)  # bank debit = +
+        100.50
         >>> merge_debit_credit(100, 50)  # Both present - ERROR
         None
     """
@@ -373,23 +388,25 @@ def merge_debit_credit(debit_value: Optional[float], credit_value: Optional[floa
             logger.warning(f"Ambiguous transaction: both debit={debit_value} and credit={credit_value} present")
             return None
 
-        # Debit only - negative float (money out). Uses the canonical
-        # parse_amount so parenthesized negatives "(1,234.56)" and comma/
-        # currency formats parse correctly (same parser as the assessor).
+        # Debit only. Uses the canonical parse_amount so parenthesized
+        # negatives "(1,234.56)" and comma/currency formats parse correctly
+        # (same parser as the assessor). Vendor polarity = -abs; a bank
+        # statement flips it to +abs.
         if debit_value is not None:
             amount = parse_amount(debit_value)
             if amount is None or amount == 0:
                 logger.warning(f"Invalid debit value: {debit_value}")
                 return None
-            return -abs(amount)
+            return abs(amount) if flip_sign else -abs(amount)
 
-        # Credit only - positive float (money in)
+        # Credit only. Vendor polarity = +abs; a bank statement flips it to
+        # -abs.
         if credit_value is not None:
             amount = parse_amount(credit_value)
             if amount is None or amount == 0:
                 logger.warning(f"Invalid credit value: {credit_value}")
                 return None
-            return abs(amount)
+            return -abs(amount) if flip_sign else abs(amount)
 
         return None
 
@@ -403,8 +420,8 @@ def merge_company_debit_credit(debit_value: Optional[Any], credit_value: Optiona
     Merge separate company cash-book debit and credit columns into a single
     Debit/Credit value under the COMPANY convention.
 
-    The company cash book records a debit (money out, e.g. a cheque issued) as
-    a POSITIVE figure and a credit (money in) as a NEGATIVE figure. This is the
+    Canonical convention (contracts/sign-convention.md §2): the company cash
+    book records a debit as POSITIVE and a credit as NEGATIVE. This is the
     direct convention used end-to-end for company records:
         Debit: positive float, Credit: negative float.
 
@@ -469,14 +486,19 @@ def merge_company_debit_credit(debit_value: Optional[Any], credit_value: Optiona
         return None
 
 
-def convert_combined_amount(amount_value: Any, sign: str) -> Optional[float]:
+def convert_combined_amount(amount_value: Any, sign: str, flip_sign: bool = False) -> Optional[float]:
     """
     Convert combined amount column to float with proper sign
     For 3-column format where debit/credit are in one column
 
+    The combined cell carries its ledger's own sign (positive = credit). Under
+    the finalized convention a BANK statement's combined column is inverted to
+    the bank polarity (flip_sign=True); a vendor ledger's is preserved.
+
     Args:
         amount_value: Amount value (numeric or string)
         sign: Sign indicator ('debit', 'credit', or auto-detected)
+        flip_sign: Invert the produced sign (bank statements).
 
     Returns:
         Float amount (negative=debit, positive=credit) or None if invalid
@@ -499,7 +521,7 @@ def convert_combined_amount(amount_value: Any, sign: str) -> Optional[float]:
             parsed = parse_amount(amount_value)
             if parsed is None or parsed == 0:
                 return None
-            return parsed
+            return -parsed if flip_sign else parsed
 
         amount = parse_amount(amount_value)
         if amount is None:
@@ -510,12 +532,13 @@ def convert_combined_amount(amount_value: Any, sign: str) -> Optional[float]:
 
         # Apply explicit sign (debit=negative, credit=positive)
         if sign == 'credit':
-            return abs(amount)   # Credit = positive (money in)
+            value = abs(amount)   # Credit = positive (money in)
         elif sign == 'debit':
-            return -abs(amount)  # Debit = negative (money out)
+            value = -abs(amount)  # Debit = negative (money out)
         else:
             logger.warning(f"Invalid sign specification: {sign}")
             return None
+        return -value if flip_sign else value
 
     except (ValueError, TypeError) as e:
         logger.warning(f"Invalid amount value: {amount_value} - {str(e)}")
@@ -528,7 +551,8 @@ def standardize_transaction_data(
     amount_value: Any,
     debit_value: Optional[Any] = None,
     credit_value: Optional[Any] = None,
-    source_type: str = 'pdf'
+    source_type: str = 'pdf',
+    flip_sign: bool = False
 ) -> Optional[Dict[str, Any]]:
     """
     Standardize transaction data to common format
@@ -541,13 +565,18 @@ def standardize_transaction_data(
         debit_value: Debit amount (for 4-column format)
         credit_value: Credit amount (for 4-column format)
         source_type: Data source ('pdf' or 'excel')
+        flip_sign: Invert the merged sign. Pass True for a BANK statement so the
+            stored value matches the finalized bank convention (debit +,
+            credit -); company cashbook and vendor rows leave it False.
 
     Returns:
         Standardized transaction dict or None if invalid
 
     Examples:
         >>> standardize_transaction_data("15-JAN-23", "Payment", None, 100, None, 'pdf')
-        {"Transaction_date": "2023-01-15", "Transaction Detail": "Payment", "Debit/Credit": 100}
+        {"Transaction_date": "2023-01-15", "Transaction Detail": "Payment", "Debit/Credit": -100.0}
+        >>> standardize_transaction_data("15-JAN-23", "Payment", None, 100, None, 'pdf', flip_sign=True)
+        {"Transaction_date": "2023-01-15", "Transaction Detail": "Payment", "Debit/Credit": 100.0}
     """
     try:
         # Normalize date based on source type. A missing/unparseable date is
@@ -574,14 +603,14 @@ def standardize_transaction_data(
         debit_credit = None
         if debit_value is not None or credit_value is not None:
             # 4-column format: separate debit/credit
-            debit_credit = merge_debit_credit(debit_value, credit_value)
+            debit_credit = merge_debit_credit(debit_value, credit_value, flip_sign=flip_sign)
         elif amount_value is not None:
             # 3-column format: combined amount (preserve original sign)
             if pd.isna(amount_value):
                 amount_value = None
             if amount_value is not None:
                 # Use 'auto' to preserve the original sign from Excel data
-                debit_credit = convert_combined_amount(amount_value, 'auto')
+                debit_credit = convert_combined_amount(amount_value, 'auto', flip_sign=flip_sign)
 
         if debit_credit is None or debit_credit == 0:
             logger.warning(f"Invalid or zero debit/credit amount")

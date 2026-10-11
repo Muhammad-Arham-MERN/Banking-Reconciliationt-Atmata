@@ -1,0 +1,234 @@
+openapi: 3.1.0
+info:
+  title: Employee Access Request API
+  version: 1.0.0
+  description: >
+    Endpoints backing the subscription layer's Employee Request flow (feature 009).
+    All three endpoints are reached by a *signed-in employee* (NextAuth/Google), so
+    they sit on the ordinary authenticated branch of the backend middleware — NOT under
+    /api/admin. Every request must carry `Authorization: Bearer <session.user.access_token>`.
+servers:
+  - url: http://localhost:8000
+    description: Local development
+
+security:
+  - bearerAuth: []
+
+paths:
+  /api/companies:
+    get:
+      summary: List companies for the Employee Request dropdown
+      description: >
+        Returns every company the Developer has onboarded, in the same order the admin
+        dashboard shows them (newest first). Backed by company_service.list_companies().
+        The logo is exposed as a path, not inline bytes; the client fetches it with its
+        Bearer token (an <img> cannot send one).
+      operationId: listCompaniesForRequest
+      tags: [companies]
+      responses:
+        "200":
+          description: The company list (may be empty).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CompanyOptionListResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/companies/{company_id}/logo:
+    get:
+      summary: Stream a company logo to a signed-in employee
+      description: >
+        Reuses logo_path()/logo_content_type() from company_logo_service. Served with
+        X-Content-Type-Options: nosniff and Content-Disposition: inline; the frontend
+        renders it via an object URL from a blob fetch.
+      operationId: getCompanyLogoForEmployee
+      tags: [companies]
+      parameters:
+        - name: company_id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The company id (stringified SERIAL).
+      responses:
+        "200":
+          description: The logo image.
+          content:
+            image/png:
+              schema: { type: string, format: binary }
+            image/jpeg:
+              schema: { type: string, format: binary }
+            image/svg+xml:
+              schema: { type: string, format: binary }
+          headers:
+            X-Content-Type-Options:
+              schema: { type: string, const: nosniff }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: The company does not exist, or it has no logo.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/employees/requests:
+    post:
+      summary: Submit an employee access request
+      description: >
+        Stores a pending request in the `employees` table. The employee_id is normalized
+        server-side (trimmed, lowercased, `adam-` prefix applied when missing) and must
+        resolve to `adam-` + 6–12 lowercase alphanumerics. Uniqueness is composite on
+        (employee_id, company_id): the same ID may request several companies, but never
+        the same one twice.
+      operationId: createEmployeeRequest
+      tags: [employees]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EmployeeRequestCreate"
+      responses:
+        "201":
+          description: The request was recorded, pending the company's decision.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EmployeeRequestResponse"
+        "400":
+          description: >
+            A required field is missing/blank (error `missing_field`), or the ID does not
+            fit the `adam-` shape after normalization (error `invalid_employee_id`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: The requested company does not exist (error `company_not_found`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: >
+            This employee ID has already requested this company (error
+            `employee_id_taken`). No duplicate row is created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: The NextAuth access token from `session.user.access_token`.
+
+  responses:
+    Unauthorized:
+      description: Missing, invalid, or unknown-user bearer token.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+
+  schemas:
+    CompanyOption:
+      type: object
+      required: [id, name, logo_url]
+      properties:
+        id:
+          type: string
+          description: Stringified company id; the value posted back as `company_id`.
+          examples: ["7"]
+        name:
+          type: string
+          examples: ["Greaves Pakistan"]
+        logo_url:
+          type: [string, "null"]
+          description: >
+            Path to the authenticated logo endpoint, or null when the company has no
+            logo (the dropdown then shows a placeholder).
+          examples: ["/api/companies/7/logo", null]
+
+    CompanyOptionListResponse:
+      type: object
+      required: [companies]
+      properties:
+        companies:
+          type: array
+          items:
+            $ref: "#/components/schemas/CompanyOption"
+
+    EmployeeRequestCreate:
+      type: object
+      required: [employee_name, employee_id, company_id]
+      properties:
+        employee_name:
+          type: string
+          minLength: 1
+          maxLength: 255
+          examples: ["Bilal Ahmed"]
+        employee_id:
+          type: string
+          maxLength: 64
+          description: >
+            May be typed or generated on the spot. The server trims it, lowercases it,
+            and applies the `adam-` prefix when missing; the remainder must be 6–12
+            characters of `[a-z0-9]`.
+          examples: ["adam-7f3k92qz", "7f3k92qz", "adam-7F3K92QZ"]
+        company_id:
+          type: string
+          description: The `id` from a CompanyOption.
+          examples: ["7"]
+
+    EmployeeRequestResponse:
+      type: object
+      required: [id, employee_name, employee_id, company_id, company_name, status, created_at]
+      properties:
+        id:
+          type: string
+          description: Stringified SERIAL.
+        employee_name:
+          type: string
+        employee_id:
+          type: string
+          description: The stored canonical value, e.g. `adam-7f3k92qz`.
+        company_id:
+          type: string
+        company_name:
+          type: string
+          description: The snapshot taken at submit time.
+        status:
+          type: string
+          enum: [pending, accepted, denied]
+        created_at:
+          type: string
+          format: date-time
+
+    ErrorResponse:
+      type: object
+      required: [error, message]
+      description: >
+        The structured envelope the admin and cloud routes already use:
+        `{"error": "<code>", "message": "<human text>", "details": ... }`.
+      properties:
+        error:
+          type: string
+          examples:
+            - missing_field
+            - invalid_employee_id
+            - company_not_found
+            - employee_id_taken
+            - unauthorized
+        message:
+          type: string
+          examples: ["This ID has already requested this company."]
+        details:
+          type: [object, "null"]
