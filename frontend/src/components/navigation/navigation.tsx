@@ -62,6 +62,9 @@ export function Navigation() {
   // Gate on the token too: when the session is gone, stale membership state is
   // ignored rather than cleared inside an effect.
   const isMember = Boolean(token) && Boolean(membership);
+  // Application access additionally needs the company's free trial running.
+  // The membership (and the Leave action) survive an inactive trial.
+  const hasAccess = isMember && membership?.trial_active === true;
 
   const handleLeave = async () => {
     if (!token) return;
@@ -83,14 +86,14 @@ export function Navigation() {
   return (
     <header className="flex items-center justify-between border-b border-gray-200 bg-white px-6 py-3 dark:border-gray-800 dark:bg-gray-950">
       <a
-        href={isMember ? '/upload-ai' : '/subscription'}
+        href={hasAccess ? '/upload-ai' : '/subscription'}
         className="text-lg font-semibold text-gray-900 dark:text-gray-100"
       >
         Bank Reconciliation
       </a>
 
       <nav className="flex items-center gap-4 text-sm font-medium">
-        {isMember && (
+        {hasAccess && (
           <a href="/upload-ai" className={APP_LINK_CLASS}>
             Upload (AI)
           </a>
@@ -100,6 +103,12 @@ export function Navigation() {
           <span className="hidden items-center gap-1.5 text-gray-600 sm:inline-flex dark:text-gray-300">
             <Building2 className="size-4" />
             {membership.company_name}
+          </span>
+        )}
+
+        {isMember && !hasAccess && (
+          <span className="hidden items-center gap-1.5 rounded-full border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-xs font-medium text-amber-700 sm:inline-flex dark:text-amber-400">
+            Trial inactive
           </span>
         )}
 

@@ -202,6 +202,24 @@ async def auth_middleware(request: Request, call_next):
                 },
             )
 
+        # The member company's free trial must be running (assigned AND started
+        # AND within its window). This is the single server-side enforcement
+        # point — a frontend redirect alone could be bypassed by calling the
+        # API directly.
+        if not membership.get("trial_active"):
+            logger.warning("Active trial required for %s %s", request.method, path)
+            return JSONResponse(
+                status_code=403,
+                content={
+                    "error": "trial_required",
+                    "message": (
+                        "Your company's free-trial access is not active. It will "
+                        "unlock when your company starts its trial."
+                    ),
+                    "status_code": 403,
+                },
+            )
+
     # Inject user context into request state and headers
     request.state.user_id = user_id_int
     request.state.user_email = user_info["email"]

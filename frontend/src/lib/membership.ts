@@ -31,9 +31,10 @@ export async function getMembership(token: string): Promise<Membership | null> {
 }
 
 /**
- * Require an accepted membership for a protected page; redirect to the
- * subscription page when there is none (the only surface a no-grant account may
- * reach, alongside sign-in). Returns the membership so the caller can use it.
+ * Require an accepted membership AND an active company free trial for a
+ * protected page; redirect to the subscription page otherwise (the only surface
+ * an account may reach, alongside sign-in). The backend enforces the same gate
+ * in auth_middleware, so this is the UX mirror. Returns the membership.
  */
 export async function requireMembership(): Promise<Membership> {
   const session = await auth();
@@ -41,7 +42,7 @@ export async function requireMembership(): Promise<Membership> {
   if (!token) redirect('/subscription');
 
   const membership = await getMembership(token);
-  if (!membership) redirect('/subscription');
+  if (!membership || !membership.trial_active) redirect('/subscription');
   return membership;
 }
 

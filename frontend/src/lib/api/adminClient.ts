@@ -84,6 +84,8 @@ function buildCompanyFormData(input: CompanyWriteInput): FormData {
   if (input.password) formData.append('password', input.password);
   formData.append('price_rupees', String(input.price_rupees));
   formData.append('payment_status', input.payment_status);
+  if (input.trial_from) formData.append('trial_from', input.trial_from);
+  if (input.trial_to) formData.append('trial_to', input.trial_to);
   if (input.logo) formData.append('logo', input.logo);
   return formData;
 }

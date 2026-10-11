@@ -172,6 +172,7 @@ from src.api.admin_routes import router as admin_router
 from src.api.company_routes import router as company_router
 from src.api.company_auth_routes import router as company_auth_router
 from src.api.company_employee_routes import router as company_employee_router
+from src.api.company_trial_routes import router as company_trial_router
 from src.api.company_requests_routes import router as company_requests_router
 from src.api.employee_routes import router as employee_router
 from src.api.me_routes import router as me_router
@@ -187,6 +188,7 @@ app.include_router(admin_router)
 app.include_router(company_router)
 app.include_router(company_auth_router)
 app.include_router(company_employee_router)
+app.include_router(company_trial_router)
 app.include_router(company_requests_router)
 app.include_router(employee_router)
 app.include_router(me_router)

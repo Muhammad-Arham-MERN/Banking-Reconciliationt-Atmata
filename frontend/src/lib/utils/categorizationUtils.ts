@@ -138,7 +138,10 @@ export function getDisplayAmount(
  * Resolve the display label for a category under the active reconciliation
  * mode. In "vendor" mode the Bank-side category SLOTS are mapped to their
  * vendor equivalents (a vendor ledger occupies the same credited/debited
- * slots, though its debit/credit polarity is inverted).
+ * slots, though its debit/credit polarity is inverted), and the two company
+ * slots are renamed to the vendor-facing wording:
+ *   - Unpresented Checks -> "Invoices Not Recorded by Vendor"
+ *   - Uncleared Checks   -> "Payment Not Recorded by Vendor"
  */
 export function categoryLabel(
   category: TransactionCategory,
@@ -146,6 +149,10 @@ export function categoryLabel(
 ): string {
   if (reconciliationType === 'vendor') {
     switch (category) {
+      case TransactionCategory.UNPRESENTED_CHECKS:
+        return 'INVOICES NOT RECORDED BY VENDOR';
+      case TransactionCategory.UNCLEARED_CHECKS:
+        return 'PAYMENT NOT RECORDED BY VENDOR';
       case TransactionCategory.BANK_CREDITED_NOT_DEBITED:
         return TransactionCategory.VENDOR_CREDITED_NOT_DEBITED;
       case TransactionCategory.BANK_DEBITED_NOT_CREDITED:

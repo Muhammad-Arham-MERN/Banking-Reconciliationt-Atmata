@@ -30,6 +30,11 @@ export interface Company {
   has_password: boolean;
   price_rupees: number;
   payment_status: PaymentStatus;
+  /** Free-trial window assigned by the admin (ISO YYYY-MM-DD), or null. */
+  trial_from: string | null;
+  trial_to: string | null;
+  /** When the company clicked Start, or null until it does. */
+  trial_started_at: string | null;
   /** Derived, never stored: the number of employee records for this company. */
   employee_count: number;
   created_at: string;
@@ -69,6 +74,9 @@ export interface CompanyWriteInput {
   password?: string;
   price_rupees: number;
   payment_status: PaymentStatus;
+  /** Free-trial window (ISO YYYY-MM-DD). Required when status is `free_trial`. */
+  trial_from?: string;
+  trial_to?: string;
   logo?: File | null;
 }
 

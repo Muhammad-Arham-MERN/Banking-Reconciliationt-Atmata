@@ -228,6 +228,24 @@ CREATE INDEX IF NOT EXISTS idx_employees_company_id
 ON employees (company_id);
 """
 
+# ---- Free-trial access window on company records ----------------------------
+# The Developer assigns a free-trial window [trial_from, trial_to] from the
+# Admin Dashboard; the company activates it by clicking Start, which stamps
+# trial_started_at. A company whose trial is not active (never assigned, never
+# started, or past trial_to) cannot let its employees use the application
+# (enforced in auth_middleware via the membership lookup).
+ALTER_COMPANIES_ADD_TRIAL_FROM = """
+ALTER TABLE companies ADD COLUMN IF NOT EXISTS trial_from DATE;
+"""
+
+ALTER_COMPANIES_ADD_TRIAL_TO = """
+ALTER TABLE companies ADD COLUMN IF NOT EXISTS trial_to DATE;
+"""
+
+ALTER_COMPANIES_ADD_TRIAL_STARTED_AT = """
+ALTER TABLE companies ADD COLUMN IF NOT EXISTS trial_started_at TIMESTAMPTZ;
+"""
+
 # Ordered migration statements
 MIGRATIONS: List[str] = [
     CREATE_USERS,
@@ -251,6 +269,9 @@ MIGRATIONS: List[str] = [
     ALTER_EMPLOYEES_ADD_IS_MANAGER,
     CREATE_IDX_EMPLOYEES_ACCOUNT_USER_ID,
     CREATE_IDX_EMPLOYEES_COMPANY_ID,
+    ALTER_COMPANIES_ADD_TRIAL_FROM,
+    ALTER_COMPANIES_ADD_TRIAL_TO,
+    ALTER_COMPANIES_ADD_TRIAL_STARTED_AT,
 ]
 
 # وَإِنَّ اللَّهَ لَهُوَ خَيْرُ الرَّازِقِينَ

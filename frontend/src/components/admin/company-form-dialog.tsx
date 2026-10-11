@@ -12,8 +12,10 @@
 
 import React, { useCallback, useState } from 'react';
 import { useDropzone } from 'react-dropzone';
+import type { DateRange } from 'react-day-picker';
 import {
   AlertCircle,
+  CalendarDays,
   Dices,
   ImageIcon,
   Loader2,
@@ -32,6 +34,8 @@ import {
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Calendar } from '@/components/ui/calendar';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { cn } from '@/lib/utils';
 import { adminClient } from '@/lib/api/adminClient';
 import {
@@ -41,6 +45,27 @@ import {
 } from '@/types/admin.types';
 
 const STATUS_OPTIONS: PaymentStatus[] = ['pending', 'free_trial', 'paid'];
+
+/** Local date → ISO `YYYY-MM-DD` (no timezone shift). */
+function toIsoDate(value: Date): string {
+  const y = value.getFullYear();
+  const m = String(value.getMonth() + 1).padStart(2, '0');
+  const d = String(value.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
+/** ISO `YYYY-MM-DD` → a local Date (no timezone shift). */
+function parseIsoDate(value: string): Date {
+  const [y, m, d] = value.split('-').map(Number);
+  return new Date(y, (m ?? 1) - 1, d ?? 1);
+}
+
+/** Human-readable day, e.g. "15 Jan 2026". */
+function formatDisplayDate(value?: Date): string {
+  return value
+    ? value.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
+    : '';
+}
 
 /** A strong random password the Developer can hand to the company. */
 function generatePassword(length = 16): string {
@@ -74,6 +99,7 @@ export function CompanyFormDialog({
   const [password, setPassword] = useState('');
   const [price, setPrice] = useState('');
   const [status, setStatus] = useState<PaymentStatus>('pending');
+  const [trialRange, setTrialRange] = useState<DateRange | undefined>(undefined);
   const [logo, setLogo] = useState<File | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -89,6 +115,11 @@ export function CompanyFormDialog({
       setPassword('');
       setPrice(company ? String(company.price_rupees) : '');
       setStatus(company?.payment_status ?? 'pending');
+      setTrialRange(
+        company?.trial_from && company?.trial_to
+          ? { from: parseIsoDate(company.trial_from), to: parseIsoDate(company.trial_to) }
+          : undefined
+      );
       setLogo(null);
       setError(null);
       setSaving(false);
@@ -117,7 +148,14 @@ export function CompanyFormDialog({
   const priceValid = Number.isInteger(priceValue) && priceValue >= 0;
   const nameValid = name.trim().length > 0;
   const passwordValid = isCreate ? password.length > 0 : true;
-  const canSave = nameValid && priceValid && passwordValid && !saving;
+  const trialValid =
+    status !== 'free_trial' || (trialRange?.from != null && trialRange?.to != null);
+  const canSave = nameValid && priceValid && passwordValid && trialValid && !saving;
+
+  const trialDays =
+    trialRange?.from && trialRange?.to
+      ? Math.round((trialRange.to.getTime() - trialRange.from.getTime()) / 86_400_000) + 1
+      : null;
 
   const handleSave = async () => {
     if (!nameValid) {
@@ -132,6 +170,10 @@ export function CompanyFormDialog({
       setError('A company password is required — generate one or type your own.');
       return;
     }
+    if (status === 'free_trial' && !(trialRange?.from && trialRange?.to)) {
+      setError('Pick a From and To date for the free trial.');
+      return;
+    }
 
     setSaving(true);
     setError(null);
@@ -142,6 +184,15 @@ export function CompanyFormDialog({
         password: password || undefined,
         price_rupees: priceValue,
         payment_status: status,
+        // The window only travels for a free trial; other statuses leave it be.
+        trial_from:
+          status === 'free_trial' && trialRange?.from
+            ? toIsoDate(trialRange.from)
+            : undefined,
+        trial_to:
+          status === 'free_trial' && trialRange?.to
+            ? toIsoDate(trialRange.to)
+            : undefined,
         logo: logo ?? undefined,
       };
 
@@ -326,6 +377,55 @@ export function CompanyFormDialog({
               ))}
             </div>
           </div>
+
+          {/* Free-trial window — only relevant while the status is Free Trial */}
+          {status === 'free_trial' && (
+            <div>
+              <label className="mb-1 block text-xs font-medium text-muted-foreground">
+                Free Trial Period <span className="text-destructive">*</span>
+              </label>
+              <Popover>
+                <PopoverTrigger
+                  render={
+                    <Button
+                      type="button"
+                      variant="outline"
+                      disabled={saving}
+                      className="h-9 w-full justify-start gap-2 text-sm font-normal"
+                    />
+                  }
+                >
+                  <CalendarDays className="size-4 text-muted-foreground" />
+                  {trialRange?.from ? (
+                    trialRange.to ? (
+                      <span>
+                        {formatDisplayDate(trialRange.from)} → {formatDisplayDate(trialRange.to)}
+                      </span>
+                    ) : (
+                      <span>{formatDisplayDate(trialRange.from)} → …</span>
+                    )
+                  ) : (
+                    <span className="text-muted-foreground">Pick a From and To date</span>
+                  )}
+                </PopoverTrigger>
+                <PopoverContent align="start" className="w-auto p-2">
+                  <Calendar
+                    mode="range"
+                    numberOfMonths={2}
+                    defaultMonth={trialRange?.from}
+                    selected={trialRange}
+                    onSelect={setTrialRange}
+                    autoFocus
+                  />
+                </PopoverContent>
+              </Popover>
+              <p className="mt-1 text-[11px] text-muted-foreground">
+                {trialDays
+                  ? `${trialDays} day${trialDays === 1 ? '' : 's'} — employees unlock when the company clicks Start.`
+                  : 'Employees unlock only after the company clicks Start.'}
+              </p>
+            </div>
+          )}
         </div>
 
         <DialogFooter>

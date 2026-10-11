@@ -10,7 +10,11 @@
  * frontend/src/lib/api/adminClient.ts, including its error-extraction shape,
  * so both clients read the same way.
  */
-import type { CompanyLoginResponse, DeleteResponse } from '@/types/company.types';
+import type {
+  CompanyLoginResponse,
+  CompanyTrialState,
+  DeleteResponse,
+} from '@/types/company.types';
 import type {
   CompanyEmployee,
   EmployeeListResponse,
@@ -121,6 +125,23 @@ export const companyClient = {
       headers: { Authorization: `Bearer ${token}` },
     });
     return handleResponse<DeleteResponse>(response);
+  },
+
+  /** The signed-in company's assigned free-trial window + state. */
+  async getTrial(token: string): Promise<CompanyTrialState> {
+    const response = await fetch(`${API_BASE_URL}/api/company/trial`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    return handleResponse<CompanyTrialState>(response);
+  },
+
+  /** Activate the free trial (idempotent once started). */
+  async startTrial(token: string): Promise<CompanyTrialState> {
+    const response = await fetch(`${API_BASE_URL}/api/company/trial/start`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    return handleResponse<CompanyTrialState>(response);
   },
 
   /** Assign or remove the Manager role (FR-019). */

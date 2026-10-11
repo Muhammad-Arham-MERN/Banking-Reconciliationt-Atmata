@@ -38,6 +38,24 @@ export interface CompanyLoginResponse {
 
 export type EmployeeStatus = 'pending' | 'accepted' | 'denied';
 
+/** Free-trial lifecycle for the signed-in company (GET/POST /api/company/trial). */
+export type CompanyTrialStatus =
+  | 'not_assigned'
+  | 'not_started'
+  | 'scheduled'
+  | 'active'
+  | 'expired';
+
+/** The company's assigned free-trial window and its current state. */
+export interface CompanyTrialState {
+  status: CompanyTrialStatus;
+  /** ISO date (YYYY-MM-DD), or null when no window is assigned. */
+  trial_from: string | null;
+  trial_to: string | null;
+  /** ISO timestamp of the Start click, or null until the company starts. */
+  trial_started_at: string | null;
+}
+
 /** Generic delete acknowledgement ({success,message}) returned by DELETE routes. */
 export interface DeleteResponse {
   success: boolean;

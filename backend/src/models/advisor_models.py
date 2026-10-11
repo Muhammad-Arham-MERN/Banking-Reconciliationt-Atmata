@@ -95,9 +95,13 @@ class AdvisorSuggestion(BaseModel):
     keys: List[str] = Field(description="Stable discrepancy_ids for the grouped items (2+)")
     type: str = Field(
         description=(
-            "The suggestion type. Canonical types are BROKEN_CHEQUE and "
-            "REVERSAL; when the user explicitly asks in chat, the agent may "
-            "return an additional human-readable type name (e.g. DUPLICATE)."
+            "The suggestion type. Default (canonical) types are BROKEN_CHEQUE, "
+            "REVERSAL, CROSS_SIDE_PAIR, COMPANY_PAIR and BANK_PAIR, spanning the "
+            "Company vs Bank, Company vs Company and Bank vs Bank architectures "
+            "(the architecture is derived from which of company_items/bank_items "
+            "the suggestion populates). When the user explicitly asks in chat, "
+            "the agent may return an additional human-readable type name (e.g. "
+            "DUPLICATE)."
         )
     )
     company_items: List[AdvisorSuggestionItem] = Field(description="Involved Company-side items")

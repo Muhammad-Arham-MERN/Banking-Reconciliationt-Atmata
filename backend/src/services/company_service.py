@@ -7,7 +7,7 @@ Passwords are encrypted on the way in and decrypted only on explicit reveal —
 the plaintext never touches the database.
 """
 import logging
-from datetime import datetime
+from datetime import date, datetime, timezone
 from typing import Any, Optional
 
 import asyncpg
@@ -19,13 +19,14 @@ logger = logging.getLogger(__name__)
 
 _COLUMNS = (
     "id, name, logo_filename, password_encrypted, price_rupees, "
-    "payment_status, created_at, updated_at"
+    "payment_status, trial_from, trial_to, trial_started_at, created_at, updated_at"
 )
 
 # Same columns, table-qualified for the employee-count join.
 _SELECT_COLUMNS = (
     "c.id, c.name, c.logo_filename, c.password_encrypted, c.price_rupees, "
-    "c.payment_status, c.created_at, c.updated_at"
+    "c.payment_status, c.trial_from, c.trial_to, c.trial_started_at, "
+    "c.created_at, c.updated_at"
 )
 
 
@@ -33,8 +34,65 @@ class DuplicateCompanyNameError(Exception):
     """Raised when a company name already exists (case-insensitive)."""
 
 
+class TrialNotAssignedError(Exception):
+    """Raised when a company tries to start a trial the admin never assigned."""
+
+
+class TrialExpiredError(Exception):
+    """Raised when a company tries to start a trial whose window already ended."""
+
+
 def _iso(value: Any) -> str:
-    return value.isoformat() if isinstance(value, datetime) else str(value)
+    return value.isoformat() if isinstance(value, (datetime, date)) else str(value)
+
+
+def _maybe_iso(value: Any) -> Optional[str]:
+    return None if value is None else _iso(value)
+
+
+def _as_date(value: Any) -> Optional[date]:
+    """Coerce a DATE column or an ISO string into a `date` (None when absent)."""
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    try:
+        return date.fromisoformat(str(value)[:10])
+    except ValueError:
+        return None
+
+
+# وَهُوَ عَلَى كُلِّ شَيْءٍ قَدِيرٌ
+def compute_trial_state(row: dict) -> str:
+    """Derive a company's free-trial state from its stored columns.
+
+    Accepts either a raw DB row (DATE/datetime values) or an API dict (ISO
+    strings). One of:
+      - "not_assigned": the admin has not set a window (or only one bound).
+      - "not_started":  a window exists but the company has not clicked Start.
+      - "scheduled":    started, but the window's From date is still ahead.
+      - "active":       started and today is within [trial_from, trial_to].
+      - "expired":      started and today is past trial_to.
+    """
+    trial_from = _as_date(row.get("trial_from"))
+    trial_to = _as_date(row.get("trial_to"))
+    if trial_from is None or trial_to is None:
+        return "not_assigned"
+    if row.get("trial_started_at") is None:
+        return "not_started"
+    today = datetime.now(timezone.utc).date()
+    if today < trial_from:
+        return "scheduled"
+    if today > trial_to:
+        return "expired"
+    return "active"
+
+
+def trial_is_active(row: dict) -> bool:
+    """True when the company's trial currently unlocks employee access."""
+    return compute_trial_state(row) == "active"
 
 
 # وَهُوَ عَلَى كُلِّ شَيْءٍ قَدِيرٌ
@@ -55,6 +113,10 @@ def company_row_to_dict(row: dict) -> dict:
         "has_password": bool(row.get("password_encrypted")),
         "price_rupees": row["price_rupees"],
         "payment_status": row["payment_status"],
+        # Free-trial window assigned by the admin + the Start stamp.
+        "trial_from": _maybe_iso(row.get("trial_from")),
+        "trial_to": _maybe_iso(row.get("trial_to")),
+        "trial_started_at": _maybe_iso(row.get("trial_started_at")),
         # Derived (never stored): the company's employee records (FR-018).
         "employee_count": int(row.get("employee_count", 0) or 0),
         "created_at": _iso(row.get("created_at")),
@@ -140,6 +202,8 @@ async def create_company(
     price_rupees: int,
     payment_status: str,
     logo_filename: Optional[str] = None,
+    trial_from: Optional[date] = None,
+    trial_to: Optional[date] = None,
 ) -> dict:
     """Create a company. The password is encrypted before it reaches the DB.
 
@@ -152,11 +216,13 @@ async def create_company(
         row = await db_service.fetchrow(
             f"""
             INSERT INTO companies
-                (name, logo_filename, password_encrypted, price_rupees, payment_status)
-            VALUES ($1, $2, $3, $4, $5)
+                (name, logo_filename, password_encrypted, price_rupees,
+                 payment_status, trial_from, trial_to)
+            VALUES ($1, $2, $3, $4, $5, $6, $7)
             RETURNING {_COLUMNS}
             """,
             name, logo_filename, encrypted, price_rupees, payment_status,
+            trial_from, trial_to,
         )
     except asyncpg.UniqueViolationError as exc:
         raise DuplicateCompanyNameError(name) from exc
@@ -174,11 +240,17 @@ async def update_company(
     price_rupees: Optional[int] = None,
     payment_status: Optional[str] = None,
     logo_filename: Optional[str] = None,
+    trial_from: Optional[date] = None,
+    trial_to: Optional[date] = None,
 ) -> Optional[dict]:
     """Partially update a company. Only the supplied fields change.
 
-    The password is re-encrypted only when a new one is provided. Returns the
-    updated row as an API dict, or None when the company does not exist.
+    The password is re-encrypted only when a new one is provided. When the
+    free-trial window actually changes the Start stamp is cleared, so a
+    re-assigned trial must be Started again. Setting the status back to
+    "pending" REVOKES the free trial outright (window + Start stamp cleared), so
+    the company's employees lose access until a new trial is assigned. Returns
+    the updated row as an API dict, or None when the company does not exist.
     """
     assignments: list[str] = []
     values: list[Any] = []
@@ -186,6 +258,9 @@ async def update_company(
     def add(column: str, value: Any) -> None:
         values.append(value)
         assignments.append(f"{column} = ${len(values)}")
+
+    # A "pending" status revokes the trial, so its dates are not set below.
+    revoking_trial = payment_status == "pending"
 
     if name is not None:
         add("name", name)
@@ -197,6 +272,27 @@ async def update_company(
         add("payment_status", payment_status)
     if logo_filename is not None:
         add("logo_filename", logo_filename)
+
+    if not revoking_trial and (trial_from is not None or trial_to is not None):
+        current = await db_service.fetchrow(
+            "SELECT trial_from, trial_to FROM companies WHERE id = $1",
+            company_id,
+        )
+        if current is not None:
+            new_from = trial_from if trial_from is not None else current["trial_from"]
+            new_to = trial_to if trial_to is not None else current["trial_to"]
+            if new_from != current["trial_from"] or new_to != current["trial_to"]:
+                add("trial_from", new_from)
+                add("trial_to", new_to)
+                # A newly (re)assigned window must be Started again.
+                assignments.append("trial_started_at = NULL")
+
+    # Revoke: back to "pending" clears the whole trial so the membership gate
+    # (which needs an active, started, in-window trial) refuses the employees.
+    if revoking_trial:
+        assignments.append("trial_from = NULL")
+        assignments.append("trial_to = NULL")
+        assignments.append("trial_started_at = NULL")
 
     assignments.append("updated_at = NOW()")
     values.append(company_id)
@@ -219,6 +315,42 @@ async def update_company(
 
     logger.info("Updated company id=%s", company_id)
     return company_row_to_dict(row)
+
+
+# وَهُوَ عَلَى كُلِّ شَيْءٍ قَدِيرٌ
+async def start_company_trial(company_id: int) -> Optional[dict]:
+    """Stamp the free-trial Start time for a company.
+
+    Idempotent: starting an already-started trial returns the current row. Raises
+    TrialNotAssignedError when the admin never assigned a window, and
+    TrialExpiredError when the assigned window already ended. Returns None only
+    when the company does not exist.
+    """
+    row = await get_company(company_id)
+    if row is None:
+        return None
+
+    if row.get("trial_from") is None or row.get("trial_to") is None:
+        raise TrialNotAssignedError(company_id)
+
+    if row.get("trial_started_at") is not None:
+        return company_row_to_dict(row)
+
+    today = datetime.now(timezone.utc).date()
+    if today > row["trial_to"]:
+        raise TrialExpiredError(company_id)
+
+    updated = await db_service.fetchrow(
+        f"""
+        UPDATE companies
+        SET trial_started_at = NOW(), updated_at = NOW()
+        WHERE id = $1
+        RETURNING {_COLUMNS}
+        """,
+        company_id,
+    )
+    logger.info("Started free trial for company id=%s", company_id)
+    return company_row_to_dict(updated)
 
 
 # وَهُوَ عَلَى كُلِّ شَيْءٍ قَدِيرٌ

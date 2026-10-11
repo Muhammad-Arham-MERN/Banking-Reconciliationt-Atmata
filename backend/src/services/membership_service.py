@@ -13,6 +13,7 @@ All access uses raw asyncpg via db_service (no ORM), with $n placeholders.
 import logging
 from typing import Optional
 
+from src.services.company_service import compute_trial_state
 from src.services.db_service import db_service
 
 logger = logging.getLogger(__name__)
@@ -22,21 +23,32 @@ logger = logging.getLogger(__name__)
 async def get_accepted_membership(account_user_id: int) -> Optional[dict]:
     """Resolve the account's accepted membership, or None when it has none.
 
-    Returns the membership shape (ids stringified) for the API layer; this is
-    the single lookup the gate adds per gated request.
+    Also resolves the member company's free-trial state (via a LEFT JOIN on
+    companies) so the auth gate can require an ACTIVE trial, not just an
+    accepted record. Returns the membership shape (ids stringified); this is the
+    single lookup the gate adds per gated request.
     """
     row = await db_service.fetchrow(
         """
-        SELECT id, employee_id, employee_name, company_id, company_name,
-               status, is_manager
-        FROM employees
-        WHERE account_user_id = $1 AND status = 'accepted'
+        SELECT e.id, e.employee_id, e.employee_name, e.company_id, e.company_name,
+               e.status, e.is_manager,
+               c.trial_from, c.trial_to, c.trial_started_at
+        FROM employees e
+        LEFT JOIN companies c ON c.id = e.company_id
+        WHERE e.account_user_id = $1 AND e.status = 'accepted'
         LIMIT 1
         """,
         account_user_id,
     )
     if row is None:
         return None
+
+    trial_status = compute_trial_state(row)
+    trial_active = trial_status == "active"
+
+    def _date(value) -> Optional[str]:
+        return value.isoformat() if value is not None else None
+
     return {
         # Stringified — CockroachDB SERIAL ids exceed JS's safe integer range.
         "id": str(row["id"]),
@@ -46,6 +58,11 @@ async def get_accepted_membership(account_user_id: int) -> Optional[dict]:
         "company_name": row["company_name"],
         "status": "accepted",
         "is_manager": bool(row["is_manager"]),
+        # Free-trial gate: access is granted only while the trial is active.
+        "trial_status": trial_status,
+        "trial_active": trial_active,
+        "trial_from": _date(row.get("trial_from")),
+        "trial_to": _date(row.get("trial_to")),
     }
 
 

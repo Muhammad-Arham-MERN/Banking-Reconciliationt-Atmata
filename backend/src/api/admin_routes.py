@@ -10,6 +10,7 @@ admin branch in auth_middleware (a dedicated admin JWT — see
 src/services/admin_auth_service.py). No endpoint below checks auth itself.
 """
 import logging
+from datetime import date
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
@@ -72,6 +73,49 @@ def _encryption_unavailable(exc: Exception) -> HTTPException:
     )
 
 
+def _trial_window_error(message: str) -> HTTPException:
+    return HTTPException(
+        status_code=400,
+        detail={"error": "invalid_trial_window", "message": message, "details": None},
+    )
+
+
+def _parse_trial_window(
+    effective_status: str | None,
+    trial_from: str | None,
+    trial_to: str | None,
+) -> tuple[date | None, date | None]:
+    """Validate and parse the free-trial From/To form fields.
+
+    A blank string (an empty field) counts as absent. When the effective payment
+    status is "free_trial" both bounds are required and From must not be after
+    To; otherwise the bounds are optional and pass through unchanged.
+    """
+    clean_from = (trial_from or "").strip() or None
+    clean_to = (trial_to or "").strip() or None
+
+    def parse(value: str, field: str) -> date:
+        try:
+            return date.fromisoformat(value)
+        except ValueError:
+            raise _trial_window_error(f"{field} must be a valid date (YYYY-MM-DD).")
+
+    parsed_from = parse(clean_from, "trial_from") if clean_from else None
+    parsed_to = parse(clean_to, "trial_to") if clean_to else None
+
+    if effective_status == "free_trial":
+        if parsed_from is None or parsed_to is None:
+            raise _trial_window_error(
+                "A free trial requires both a From and a To date."
+            )
+        if parsed_from > parsed_to:
+            raise _trial_window_error(
+                "The trial From date must be on or before the To date."
+            )
+
+    return parsed_from, parsed_to
+
+
 # وَهُوَ عَلَى كُلِّ شَيْءٍ قَدِيرٌ
 @router.post("/login", response_model=AdminLoginResponse)
 async def admin_login(body: AdminLoginRequest):
@@ -127,9 +171,15 @@ async def create_company(
     password: str = Form(..., min_length=1),
     price_rupees: int = Form(..., ge=0),
     payment_status: PaymentStatus = Form("pending"),
+    trial_from: str | None = Form(None),
+    trial_to: str | None = Form(None),
     logo: UploadFile | None = File(None),
 ):
     """Register a company, encrypting its access password at rest."""
+    parsed_trial_from, parsed_trial_to = _parse_trial_window(
+        payment_status, trial_from, trial_to
+    )
+
     logo_filename = None
     if logo is not None and logo.filename:
         try:
@@ -151,6 +201,8 @@ async def create_company(
             price_rupees=price_rupees,
             payment_status=payment_status,
             logo_filename=logo_filename,
+            trial_from=parsed_trial_from,
+            trial_to=parsed_trial_to,
         )
     except DuplicateCompanyNameError:
         # Roll back the just-written logo — the company was never created.
@@ -178,6 +230,8 @@ async def update_company(
     password: str | None = Form(None),
     price_rupees: int | None = Form(None, ge=0),
     payment_status: PaymentStatus | None = Form(None),
+    trial_from: str | None = Form(None),
+    trial_to: str | None = Form(None),
     logo: UploadFile | None = File(None),
 ):
     """Update a company. Omitted fields are left unchanged."""
@@ -195,6 +249,16 @@ async def update_company(
     # Treat blank strings from the form as "not provided".
     clean_name = name.strip() if name and name.strip() else None
     clean_password = password if password else None
+
+    # Validate the trial window against the status that will be in force after
+    # this update — the supplied status, else the stored one when dates arrive.
+    has_trial_input = bool((trial_from or "").strip()) or bool((trial_to or "").strip())
+    effective_status = payment_status
+    if effective_status is None and has_trial_input:
+        effective_status = existing["payment_status"]
+    parsed_trial_from, parsed_trial_to = _parse_trial_window(
+        effective_status, trial_from, trial_to
+    )
 
     new_logo_filename = None
     if logo is not None and logo.filename:
@@ -218,6 +282,8 @@ async def update_company(
             price_rupees=price_rupees,
             payment_status=payment_status,
             logo_filename=new_logo_filename,
+            trial_from=parsed_trial_from,
+            trial_to=parsed_trial_to,
         )
     except DuplicateCompanyNameError:
         delete_logo(new_logo_filename)

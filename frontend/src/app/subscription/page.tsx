@@ -22,7 +22,12 @@ export default async function SubscriptionPage() {
   if (!session) redirect("/login");
 
   const token = (session.user as { access_token?: string } | undefined)?.access_token;
-  if (token && (await getMembership(token))) redirect("/upload-ai");
+  if (token) {
+    // Only an active membership (accepted grant AND a running free trial) may
+    // skip this page; an inactive-trial account stays here rather than looping.
+    const membership = await getMembership(token);
+    if (membership?.trial_active) redirect("/upload-ai");
+  }
 
   return (
     <div className="mx-auto w-[85%] max-w-[1500px] px-2 py-10">

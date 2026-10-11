@@ -79,6 +79,11 @@ export interface Membership {
   company_name: string;
   status: 'accepted';
   is_manager: boolean;
+  /** The member company's free-trial state — access needs `trial_active`. */
+  trial_status: string;
+  trial_active: boolean;
+  trial_from: string | null;
+  trial_to: string | null;
 }
 
 export interface MembershipResponse {

@@ -96,6 +96,12 @@ class Membership(BaseModel):
     company_name: str
     status: Literal["accepted"] = "accepted"
     is_manager: bool = False
+    # Free-trial gate for the member company. Access is granted only while the
+    # trial is active; these are read-only signals for the frontend.
+    trial_status: str = "none"
+    trial_active: bool = False
+    trial_from: str | None = None
+    trial_to: str | None = None
 
 
 class MembershipResponse(BaseModel):

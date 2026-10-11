@@ -38,4 +38,17 @@ class CompanyLoginResponse(BaseModel):
     expires_at: str
     company: CompanyIdentity
 
+
+class CompanyTrialState(BaseModel):
+    """The signed-in company's free-trial state (GET/POST /api/company/trial).
+
+    `status` is one of: not_assigned, not_started, scheduled, active, expired.
+    Dates are ISO strings (YYYY-MM-DD); `trial_started_at` is a full timestamp or
+    null until the company clicks Start.
+    """
+    status: str
+    trial_from: str | None = None
+    trial_to: str | None = None
+    trial_started_at: str | None = None
+
 # وَإِنَّ اللَّهَ لَهُوَ خَيْرُ الرَّازِقِينَ

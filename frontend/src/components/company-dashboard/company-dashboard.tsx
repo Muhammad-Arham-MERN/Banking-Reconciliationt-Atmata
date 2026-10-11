@@ -58,7 +58,7 @@ export function CompanyDashboard() {
         {section === 'employees' ? (
           <EmployeesTable token={session.token} />
         ) : (
-          <SubscriptionPanel />
+          <SubscriptionPanel token={session.token} />
         )}
       </main>
     </div>

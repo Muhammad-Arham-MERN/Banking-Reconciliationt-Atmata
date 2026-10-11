@@ -46,6 +46,11 @@ class CompanyWriteRequest(BaseModel):
     password: str = Field(..., min_length=1)
     price_rupees: int = Field(..., ge=0)
     payment_status: PaymentStatus = "pending"
+    # Free-trial window (ISO YYYY-MM-DD). Required when payment_status is
+    # "free_trial" — enforced by the route so the error envelope matches the
+    # contract.
+    trial_from: str | None = None
+    trial_to: str | None = None
 
 
 class Company(BaseModel):
@@ -63,6 +68,10 @@ class Company(BaseModel):
     has_password: bool = True
     price_rupees: int
     payment_status: PaymentStatus
+    # Free-trial window the admin assigned (ISO dates) and the Start stamp.
+    trial_from: str | None = None
+    trial_to: str | None = None
+    trial_started_at: str | None = None
     # Derived (never stored): the number of employee records for this company
     # (FR-018). Computed in the list query so the table shows it without N+1.
     employee_count: int = 0
