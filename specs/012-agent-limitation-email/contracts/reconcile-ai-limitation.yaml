@@ -1,0 +1,178 @@
+# Contract: /reconcile-ai technical-limitation error + SSE frame extension
+# Feature: 012-agent-limitation-email
+# Plan:    ../plan.md
+# Spec:    ../spec.md
+#
+# Describes the ONLY wire additions this feature makes to the existing AI
+# reconciliation flow. Everything else (success/partial bodies, the other error
+# codes, the SSE stage/status frame shapes) is unchanged.
+#
+# Source of truth for the current flow:
+#   backend/src/api/ai_routes.py (reconcile_ai + reconcile_ai_events)
+#   backend/src/services/progress_events.py (emit_stage / emit_status)
+#   frontend/src/lib/api/aiReconciliationClient.ts (processReconciliation / streamProgress)
+#   frontend/src/components/upload/UploadAIConfig.tsx (error banner)
+
+openapi: 3.1.0
+info:
+  title: /reconcile-ai technical-limitation addendum
+  version: 1.0.0
+  description: >-
+    A failed AI reconciliation that the agent reported as a tool/engine
+    limitation is classified distinctly so the frontend can render a BLUE
+    notice. Ordinary failures are unchanged (RED).
+
+paths:
+  /reconcile-ai:
+    post:
+      summary: AI-driven reconciliation (unchanged except the new error code)
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [bankStatement, companyData]
+              properties:
+                bankStatement: { type: string, format: binary }
+                companyData:   { type: string, format: binary }
+                sheetName:     { type: string, default: Sheet1 }
+                reconciliationType: { type: string, enum: [bank, vendor], default: bank }
+                requestId:     { type: string }
+                historyName:   { type: string, nullable: true }
+      responses:
+        "200":
+          description: Unchanged success (processing_status=completed/partial_success).
+        "422":
+          description: >-
+            A reconciliation failure. `detail.error` distinguishes the NEW
+            technical-limitation case from the existing ones.
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/TechnicalLimitationError"
+                  - $ref: "#/components/schemas/AgentFailedError"
+                  - $ref: "#/components/schemas/AgentInternalError"
+                  - $ref: "#/components/schemas/ProcessingError"
+        "499":
+          description: Unchanged — cancelled by user.
+        "503":
+          description: Unchanged — server shutting down.
+
+  /reconcile-ai/{request_id}/events:
+    post:
+      summary: SSE sidecar (stage + status frames)
+      parameters:
+        - name: request_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: >-
+            text/event-stream. Stage frames are unchanged. The terminal status
+            frame gains ONE optional field: `code`.
+          content:
+            text/event-stream:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/StageFrame"
+                  - $ref: "#/components/schemas/StatusFrame"
+
+components:
+  schemas:
+
+    TechnicalLimitationError:
+      description: >-
+        NEW (FR-010, FR-012, FR-013). Emitted ONLY when the run failed AND the
+        agent reported a tool/engine limitation this run. Triggers the BLUE
+        user notice.
+      type: object
+      required: [detail]
+      properties:
+        detail:
+          type: object
+          required: [error, message]
+          properties:
+            error:
+              type: string
+              const: technical_limitation
+            message:
+              type: string
+              description: >-
+                Non-technical, jargon-free wording shown to the user. States that
+                there is a technical limitation from our side, that the agent has
+                sent the limitation to the developer for improvement, and to
+                please wait in the meantime.
+              example: >-
+                There is a technical limitation from our side. Our agent has sent
+                the limitation to the developer for improvement — please wait in
+                the meantime.
+            details:
+              type: object
+              properties:
+                tool_name: { type: string }
+                run_id:    { type: string }
+                retries_used: { type: integer }
+
+    AgentFailedError:
+      description: Unchanged — guardrail retries exhausted, no reported limitation (RED).
+      type: object
+      properties:
+        detail:
+          type: object
+          properties:
+            error:   { type: string, const: agent_failed }
+            message: { type: string }
+            details: { type: object }
+
+    AgentInternalError:
+      description: Unchanged — LLM-failure retries exhausted, no reported limitation (RED).
+      type: object
+      properties:
+        detail:
+          type: object
+          properties:
+            error:   { type: string, const: agent_internal_error }
+            message: { type: string }
+            details: { type: object }
+
+    ProcessingError:
+      description: Unchanged — validation / unexpected error (RED).
+      type: object
+      properties:
+        detail:
+          type: object
+          properties:
+            error:   { type: string, const: processing_error }
+            message: { type: string }
+            details: { type: object }
+
+    StageFrame:
+      description: >-
+        Unchanged live-progress frame. The limitation tool emits one with a
+        neutral sentiment and a "limitation reported to the developer" message
+        (FR-011).
+      type: object
+      required: [type, key, message, sentiment, emoji, progress_delta]
+      properties:
+        type:      { type: string, const: stage }
+        key:       { type: string, example: limitation_reported }
+        message:   { type: string }
+        sentiment: { type: string, enum: [positive, neutral, negative] }
+        emoji:     { type: string }
+        progress_delta: { type: number }
+
+    StatusFrame:
+      description: >-
+        Terminal frame. `code` is NEW and OPTIONAL: it carries
+        "technical_limitation" on the error frame when the run failed with a
+        reported limitation, so the overlay can reflect the same classification.
+        Other frames omit it.
+      type: object
+      required: [type, state, message]
+      properties:
+        type:    { type: string, const: status }
+        state:   { type: string, enum: [done, error, cancelled] }
+        message: { type: string }
+        code:    { type: string, enum: [technical_limitation], nullable: true }

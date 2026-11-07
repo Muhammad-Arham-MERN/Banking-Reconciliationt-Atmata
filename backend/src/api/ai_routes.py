@@ -63,6 +63,13 @@ logger = logging.getLogger(__name__)
 # Router for the AI-based reconciliation flow
 router = APIRouter()
 
+# User-facing wording when a run fails because the agent reported a tool/engine
+# limitation (FR-012). Deliberately non-technical — no jargon, no stack traces.
+TECHNICAL_LIMITATION_MESSAGE = (
+    "There is a technical limitation from our side. Our agent has sent the "
+    "limitation to the developer for improvement — please wait in the meantime."
+)
+
 
 # وَهُوَ عَلَى كُلِّ شَيْءٍ قَدِيرٌ
 @router.post("/reconcile-ai")
@@ -122,6 +129,11 @@ async def reconcile_ai(
     # and start the per-request progress bus the sidecar SSE route reads from.
     register_run(request_id)
     progress_events.start_progress(request_id)
+
+    # Shared per-run dict the agent's report_tool_limitation tool writes to when
+    # it reports a tool/engine limitation. Read below to classify a failed run
+    # as a technical limitation (FR-010/FR-012) rather than an ordinary failure.
+    limitation_holder: dict = {}
 
     pdf_path = None
     excel_path = None
@@ -189,6 +201,7 @@ async def reconcile_ai(
             sheet_name,
             request_id=request_id,
             reconciliation_type=rec_type,
+            limitation_holder=limitation_holder,
         )
         detection_time_ms = int((time.time() - detection_start) * 1000)
 
@@ -406,10 +419,32 @@ async def reconcile_ai(
             },
         )
     except AIDetectionError as e:
-        # The AI structure-detection agent exhausted its retries. Distinguish:
-        # guardrail_failed = the agent never produced a structure that passed
-        # the assess_structure tool verdict; llm_failed = LLM-failure retries
-        # exhausted (internal server error).
+        # The AI structure-detection agent exhausted its retries. First check
+        # whether the agent reported a tool/engine limitation this run: if so,
+        # this is a technical limitation on OUR side, classified distinctly so
+        # the frontend shows the blue notice (FR-010/FR-012/FR-013). Otherwise
+        # fall through to the ordinary failure handling below.
+        # وَهُوَ عَلَى كُلِّ شَيْءٍ قَدِيرٌ
+        if limitation_holder.get("reported"):
+            report = limitation_holder.get("report") or {}
+            detail = {
+                "error": "technical_limitation",
+                "message": TECHNICAL_LIMITATION_MESSAGE,
+                "details": {
+                    "tool_name": report.get("tool_name"),
+                    "run_id": request_id,
+                    "retries_used": e.retries_used,
+                },
+            }
+            logger.error("AI structure detection failed (technical limitation reported): %s", detail)
+            progress_events.emit_status(
+                request_id, "error", TECHNICAL_LIMITATION_MESSAGE, code="technical_limitation"
+            )
+            raise HTTPException(status_code=422, detail=detail)
+
+        # Distinguish: guardrail_failed = the agent never produced a structure
+        # that passed the assess_structure tool verdict; llm_failed = LLM-failure
+        # retries exhausted (internal server error).
         if e.reason == "guardrail_failed":
             detail = {
                 "error": "agent_failed",

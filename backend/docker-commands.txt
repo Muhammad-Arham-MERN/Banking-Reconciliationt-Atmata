@@ -1,0 +1,61 @@
+# Docker commands — Backend Reconciliation Service
+# Run all commands from the `backend/` directory (where the Dockerfile lives).
+# The Dockerfile uses uv + python3.13-slim and serves src.main:app on port 8000.
+
+# 1) Build the production image
+docker build -t bank-recon-backend:latest .
+
+# 2) Build with a version tag (recommended for deploys)
+docker build -t bank-recon-backend:1.0.0 .
+
+# 3) Build without using the layer cache (clean rebuild)
+docker build --no-cache -t bank-recon-backend:latest .
+
+# 4) Run the container (basic)
+#    -p maps host:container, container listens on 8000
+docker run --name bank-recon-backend -p 8000:8000 -d bank-recon-backend:latest
+
+# 5) Run with environment variables from .env (secrets never baked into image)
+docker run --name bank-recon-backend -p 8000:8000 --env-file .env -d bank-recon-backend:latest
+
+# 6) Run with persistent volumes
+#    /app/data/uploads  -> runtime uploads (ephemeral, retention-swept)
+#    /app/data          -> company logos live OUTSIDE uploads (must persist)
+docker run --name bank-recon-backend -p 8000:8000 \
+  --env-file .env \
+  -v bank-recon-uploads:/app/data/uploads \
+  -v bank-recon-data:/app/data \
+  -d bank-recon-backend:latest
+
+# 7) Run with a bind mount (host folder -> container)
+docker run --name bank-recon-backend -p 8000:8000 \
+  --env-file .env \
+  -v "$(pwd)/uploads:/app/data/uploads" \
+  -d bank-recon-backend:latest
+
+# 8) Tail logs
+docker logs -f bank-recon-backend
+
+# 9) Open a shell inside the running container
+docker exec -it bank-recon-backend /bin/bash
+
+# 10) Stop / start / restart
+docker stop bank-recon-backend
+docker start bank-recon-backend
+docker restart bank-recon-backend
+
+# 11) Remove container, then image
+docker rm -f bank-recon-backend
+docker rmi bank-recon-backend:latest
+
+# 12) Verify the API is up (health/docs)
+#    Docs: http://localhost:8000/docs   OpenAPI: http://localhost:8000/openapi.json
+curl http://localhost:8000/openapi.json
+
+# 13) Tag and push to a registry (example: Docker Hub)
+docker tag bank-recon-backend:latest <your-dockerhub-user>/bank-recon-backend:latest
+docker push <your-dockerhub-user>/bank-recon-backend:latest
+
+# 14) Save image to a tarball / load it elsewhere (air-gapped deploys)
+docker save bank-recon-backend:latest -o bank-recon-backend.tar
+docker load -i bank-recon-backend.tar

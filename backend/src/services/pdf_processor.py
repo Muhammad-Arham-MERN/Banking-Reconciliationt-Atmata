@@ -20,6 +20,9 @@ from src.utils.logger import (
     log_performance_warning
 )
 from src.utils.error_handlers import PDFProcessingError
+# Shared tolerant row assembly (baseline-jitter merge) — the same helper the AI
+# extractor uses, so both PDF paths cluster rows identically.
+from src.utils.layout_rows import group_words_into_lines
 
 logger = logging.getLogger(__name__)
 
@@ -61,14 +64,16 @@ def _extract_rows_via_layout(pdf_path: str) -> pd.DataFrame:
     with pdfplumber.open(pdf_path) as pdf:
         for page in pdf.pages:
             words = page.extract_words()
-            # Group words into visual lines by their top coordinate
-            lines: dict[float, list[dict]] = {}
-            for w in words:
-                if TRANSACTION_BAND_TOP <= w["top"] <= TRANSACTION_BAND_BOTTOM:
-                    lines.setdefault(round(w["top"], 1), []).append(w)
+            # Keep the transaction band, then cluster into logical rows with a
+            # small vertical tolerance so a baseline-jittered row is reassembled
+            # instead of split (its amount cells would be dropped otherwise).
+            band_words = [
+                w for w in words
+                if TRANSACTION_BAND_TOP <= w["top"] <= TRANSACTION_BAND_BOTTOM
+            ]
 
-            for top in sorted(lines):
-                cells = _slice_words_to_columns(lines[top])
+            for _top, line_words in group_words_into_lines(band_words):
+                cells = _slice_words_to_columns(line_words)
                 # Keep only transaction rows: first column is a statement date
                 if re.match(DATE_PATTERN, cells[0]):
                     rows.append(

@@ -71,8 +71,30 @@ class AIDetectionError(Exception):
         self.side = side
         # reason: "guardrail_failed" (output failed the guardrail checks after
         # MAX_GUARDRAIL_RETRIES), "llm_failed" (LLM-failure retries exhausted),
+        # "technical_limitation" (the agent reported a tool/engine limitation),
         # or "unknown".
         self.reason = reason
+
+
+# وَهُوَ عَلَى كُلِّ شَيْءٍ قَدِيرٌ
+class ToolLimitationReported(Exception):
+    """Raised by report_tool_limitation to STOP the run the moment the agent
+    reports a tool/engine limitation.
+
+    The tool is registered with failure_error_function=None so the SDK does NOT
+    absorb this — it propagates out of the agent run. Consequently there are NO
+    LLM-failure retries and NO guardrail re-run loop once the agent has said its
+    own tools cannot do the job (otherwise the guardrail would keep re-running
+    the agent against tools it just declared insufficient).
+
+    detect_structure converts it into a terminal AIDetectionError; the route
+    then classifies the failure as a technical limitation (it reads
+    limitation_holder["reported"]).
+    """
+
+    def __init__(self, report: Optional[dict] = None):
+        super().__init__("Tool/engine limitation reported by the agent")
+        self.report = report or {}
 
 
 class FileStructureOutput(BaseModel):
@@ -307,6 +329,7 @@ def build_agent_tools(
     request_id: Optional[str] = None,
     reconciliation_type: str = "bank",
     verdict_holder: Optional[dict] = None,
+    limitation_holder: Optional[dict] = None,
 ) -> list:
     """Create the file-inspection tools bound to the uploaded file paths.
 
@@ -321,11 +344,20 @@ def build_agent_tools(
         reconciliation_type: Which books the statement belongs to - "bank"
             (default) or "vendor". Becomes the default the agent starts from
             when calling assess_structure (the agent may still override it).
+        limitation_holder: Shared per-run dict the report_tool_limitation tool
+            writes to when the agent reports a tool/engine limitation; the
+            route reads it to classify a failed run as a technical limitation.
+            Normalized ONCE here so the tool and the route share one object.
 
     Returns:
         List of tools for the Agent: judge_structure_by_cover, read_excel,
-        read_pdf, read_pdf_words, assess_structure.
+        read_pdf, read_pdf_words, assess_structure, report_tool_limitation.
     """
+    # Shared per-run state for the limitation reporter. Normalize ONCE (never
+    # `or {}` — an empty dict is falsy, which would create a NEW object and
+    # break sharing between the tool and the caller, exactly like verdict_holder).
+    if limitation_holder is None:
+        limitation_holder = {}
 
     @tool
     def read_excel(drop: int = 0, lines: int = 3) -> str:
@@ -707,6 +739,120 @@ def build_agent_tools(
                 )
         return _json.dumps(assessment, indent=2, default=str)
 
+    # وَهُوَ عَلَى كُلِّ شَيْءٍ قَدِيرٌ
+    @tool(failure_error_function=None)
+    def report_tool_limitation(
+        tool_name: str,
+        issue: str,
+        details: str,
+        example: str,
+        analogy: str,
+        proposed_solution: str,
+        reason: str,
+    ) -> str:
+        """Email the developer when a failure is caused by a limitation or defect of your own tools/engine, or when you are confident a NEW tool is needed.
+
+        Use this ONLY for genuine tool/engine limitations — never for ordinary
+        failures such as malformed/unsupported input files, ordinary data
+        mismatches, or user error. A report without a valid, tool-anchored
+        `reason` is rejected and NOT sent. At most ONE report is sent per run.
+
+        Provide an ANONYMISED / STRUCTURAL example (column names, layout, the
+        nature of the failure) — never raw transaction rows, account numbers, or
+        balances. Never include credentials, API keys, or tokens.
+
+        Args:
+            tool_name: The tool the limitation concerns, or "engine" if it is
+                the pipeline itself. One of: judge_structure_by_cover,
+                read_excel, read_pdf, read_pdf_words, assess_structure, engine.
+            issue: One-line description of the problem/limitation.
+            details: What you attempted, where it failed, and the observed error.
+            example: A concrete, anonymised/structural example of the problem.
+            analogy: A plain-language analogy that explains the issue.
+            proposed_solution: The tool upgrade or new tool you believe is needed.
+            reason: Why that upgrade/new tool is needed, tied to `tool_name`.
+
+        Returns:
+            This tool does NOT return: once called, it STOPS the whole run
+            immediately — no retries and no guardrail re-loop — because you have
+            declared your own tools/engine insufficient. It records the report,
+            emails it to the developer best-effort, then aborts processing.
+        """
+        # Idempotency (FR-006): a report was already sent this run. Do not
+        # resend, but STILL stop — the run must not continue.
+        if limitation_holder.get("reported"):
+            raise ToolLimitationReported(limitation_holder.get("report") or {})
+
+        report = {
+            "tool_name": (tool_name or "").strip(),
+            "issue": (issue or "").strip(),
+            "details": (details or "").strip(),
+            "example": (example or "").strip(),
+            "analogy": (analogy or "").strip(),
+            "proposed_solution": (proposed_solution or "").strip(),
+            "reason": (reason or "").strip(),
+            "run_id": request_id or "",
+            "stage": "structure_detection",
+        }
+
+        # Record on the shared per-run holder FIRST so the route classifies this
+        # failure as a technical limitation (FR-010/FR-012). This also happens
+        # for an incomplete report — the agent's intent was "my tools cannot do
+        # this", so the run stops either way.
+        limitation_holder["reported"] = True
+        limitation_holder["report"] = report
+
+        # Live feedback for the loading overlay (FR-011). emit_stage is
+        # thread-safe and never blocks.
+        progress_events.emit_stage(
+            request_id,
+            "limitation_reported",
+            "A technical limitation was found on our side — our agent has notified the developer.",
+            sentiment="neutral",
+            emoji="🛠️",
+            progress_delta=0,
+        )
+
+        # Validate (FR-003e, FR-007): every field present and the reason anchored
+        # to the named tool. An incomplete report is NOT emailed, but the run is
+        # STILL stopped.
+        required = (
+            "tool_name",
+            "issue",
+            "details",
+            "example",
+            "analogy",
+            "proposed_solution",
+            "reason",
+        )
+        incomplete = any(not report[field] for field in required) or (
+            report["tool_name"].lower() not in report["reason"].lower()
+        )
+        if incomplete:
+            logger.warning(
+                "report_tool_limitation called with an incomplete report; "
+                "stopping the run without sending an email."
+            )
+        else:
+            # Best-effort send: never raise on a delivery failure (FR-005). The
+            # SDK runs sync tools in worker threads, so bridge the async send
+            # onto the main loop (same idiom as the Judge's lookup tool).
+            try:
+                from src.services import notification_service
+                from src.services.db_service import run_on_main_loop
+
+                run_on_main_loop(
+                    lambda: notification_service.send_agent_limitation_email(report)
+                )
+            except Exception as e:  # noqa: BLE001 — fail-soft by design (FR-005)
+                logger.error("report_tool_limitation could not send the email: %s", e)
+
+        # STOP THE RUN: no retries and no guardrail re-loop. failure_error_function
+        # =None lets this propagate out of the agent run; detect_structure turns it
+        # into a terminal AIDetectionError the route classifies as a technical
+        # limitation.
+        raise ToolLimitationReported(report)
+
     return [
         build_judge_tool(
             pdf_path,
@@ -721,6 +867,7 @@ def build_agent_tools(
         read_pdf,
         read_pdf_words,
         assess_structure,
+        report_tool_limitation,
     ]
 
 
@@ -731,7 +878,22 @@ What is your task? Your task is to identify the exact page properties (defined l
 
 Why you are important? There are multiple pdfs and excels, they can have completely different format and structure, defining each format systematically is non-feasible for any System, so you are given such tools you can use to identify such page properties that can be input in our deterministic system and get results from pdf and excel accurately.
 
-How is ths achieved? You have 5 tools for reading pdf and excel and evaluating results
+How is ths achieved? You have 6 tools for reading pdf and excel, evaluating results, and reporting tool/engine limitations
+
+YOUR TOOLS (purpose only - what each is FOR, not how it works):
+  - judge_structure_by_cover : recall a known bank/vendor's stored structure from the PDF's first lines
+  - read_excel                : read rows from the Excel ledger
+  - read_pdf                  : read table rows from the PDF statement
+  - read_pdf_words            : read word geometry / column positions of the first two pages
+  - assess_structure          : score a proposed structure against the statement
+  - report_tool_limitation    : email the developer about a tool/engine limitation, or a needed new tool
+
+[REPORTING A TOOL LIMITATION - report_tool_limitation]
+  - Use report_tool_limitation ONLY when YOU determine that a failure is caused by a genuine limitation or defect of your OWN tools/engine, or when you are confident a NEW tool is required.
+  - You MUST email whenever a reconciliation/extraction failure is caused by a tool/engine limitation - but NEVER for ordinary failures (e.g. malformed or unsupported input files, ordinary data mismatches, or user error). Do NOT report "any failure".
+  - Every report MUST include: the issue, the supporting details, a concrete example, an analogy that explains it, and a proposed solution (the tool upgrade or new tool) WITH a valid reason tied to the named tool.
+  - Provide an ANONYMISED / STRUCTURAL example only (column names, layout, the nature of the failure) - never raw rows, account numbers, or balances, and never credentials / API keys / tokens.
+  - Send at most ONE report per run, and keep your proposed solutions consistent with what each tool above is actually for.
 
 [JUDGE - CALL THIS FIRST]
   - FIRST, before any file inspection, call the judge_structure_by_cover tool. It reads whose PDF this is from its first lines and checks whether the system already knows that bank/vendor's PDF structure. It returns either:
@@ -856,6 +1018,7 @@ def build_agent(
     request_id: Optional[str] = None,
     reconciliation_type: str = "bank",
     verdict_holder: Optional[dict] = None,
+    limitation_holder: Optional[dict] = None,
 ) -> Agent:
     """Build the structure-detection Agent bound to the uploaded files.
 
@@ -876,6 +1039,9 @@ def build_agent(
             agent starts from when evaluating its proposed structure.
         verdict_holder: Shared dict used by the assess_structure tool to
             record its last verdict; the guardrail reads it.
+        limitation_holder: Shared per-run dict the report_tool_limitation tool
+            writes its report to; the route reads it to classify a failed run
+            as a technical limitation.
     """
     return Agent(
         name="Excel/PDF extraction agent",
@@ -888,6 +1054,7 @@ def build_agent(
             request_id=request_id,
             reconciliation_type=reconciliation_type,
             verdict_holder=verdict_holder,
+            limitation_holder=limitation_holder,
         ),
         # CRITICAL: pass the SAME dict object to both the tool and the
         # guardrail. `verdict_holder or {}` would create a NEW empty dict when
@@ -1023,6 +1190,7 @@ async def detect_structure(
     max_guardrail_retries: int = MAX_GUARDRAIL_RETRIES,
     request_id: Optional[str] = None,
     reconciliation_type: str = "bank",
+    limitation_holder: Optional[dict] = None,
 ) -> FileStructureOutput:
     """Run the agent and return the parsed structure, retrying on failure.
 
@@ -1053,6 +1221,10 @@ async def detect_structure(
         reconciliation_type: "bank" (default) or "vendor" - which books the
             statement belongs to; becomes the default the agent starts from
             when calling assess_structure (FR-006).
+        limitation_holder: Shared per-run dict the report_tool_limitation tool
+            writes its report to; the caller (route) reads it to classify a
+            failed run as a technical limitation. Normalized once in
+            build_agent_tools so the caller and the tool share one object.
 
     Returns:
         Parsed FileStructureOutput.
@@ -1077,6 +1249,10 @@ async def detect_structure(
     # the output guardrail reads it (its ONLY input is the tool's pass/fail).
     verdict_holder: dict = {}
 
+    # Tracked so the ToolLimitationReported handler can report how many attempts
+    # were made before the agent declared its tools/engine insufficient.
+    attempt = 0
+
     try:
         for guardrail_attempt in range(max_guardrail_retries + 1):
             for attempt in range(1, max_attempts + 1):
@@ -1097,6 +1273,7 @@ async def detect_structure(
                     request_id=request_id,
                     reconciliation_type=reconciliation_type,
                     verdict_holder=verdict_holder,
+                    limitation_holder=limitation_holder,
                 )
 
                 try:
@@ -1147,6 +1324,10 @@ async def detect_structure(
                         _observe_tool_event(request_id, _event)
 
                     final_output = stream.final_output or ""
+                except ToolLimitationReported:
+                    # The agent reported a tool/engine limitation: abort at once.
+                    # Do NOT retry and do NOT re-run the guardrail loop.
+                    raise
                 except asyncio.CancelledError:
                     raise
                 except OutputGuardrailTripwireTriggered as tw:
@@ -1173,6 +1354,13 @@ async def detect_structure(
                     )
                     break
                 except Exception as e:
+                    # If a limitation was reported, the run must STOP — never
+                    # treat it as a retryable LLM failure. This also covers the
+                    # SDK possibly wrapping the tool's exception.
+                    if limitation_holder.get("reported"):
+                        raise ToolLimitationReported(
+                            limitation_holder.get("report") or {}
+                        ) from e
                     # If the user cancelled, don't treat the aborted stream as a
                     # retryable failure — surface it as cancellation so the route
                     # returns 499 instead of a generic 422.
@@ -1251,6 +1439,21 @@ async def detect_structure(
             # next guardrail attempt (fresh inner loop).
             if guardrail_attempt >= max_guardrail_retries:
                 break
+    except ToolLimitationReported as e:
+        # The agent reported a tool/engine limitation: stop for good — no more
+        # retries, no guardrail re-loop. Convert to a terminal AIDetectionError;
+        # the route reads limitation_holder["reported"] and returns the blue
+        # technical-limitation response.
+        logger.warning(
+            "Stopping AI structure detection: agent reported a tool/engine "
+            "limitation%s",
+            f" (tool={e.report.get('tool_name')})" if e.report.get("tool_name") else "",
+        )
+        raise AIDetectionError(
+            message=AGENT_FAILED_MESSAGE,
+            retries_used=attempt,
+            reason="technical_limitation",
+        ) from e
     finally:
         # NOTE: the run registry + progress bus are owned by the ROUTE
         # (ai_routes.reconcile_ai) so cancellation and live progress keep

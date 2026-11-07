@@ -483,8 +483,25 @@ export function UploadAIConfig() {
           </div>
         )}
 
+        {/* Technical-limitation notice (FR-012/FR-013) — BLUE: the failure is on
+            our side and the agent has reported it to the developer. Only this
+            error code gets the blue treatment; everything else stays red below. */}
+        {errorMessage && !isSubmitting && !wasStopped && errorCode === 'technical_limitation' && (
+          <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 dark:bg-blue-950/40 dark:border-blue-900">
+            <div className="text-sm text-blue-800 dark:text-blue-200">
+              <div className="font-semibold mb-1">Technical limitation from our side</div>
+              <div>{errorMessage}</div>
+              <div className="mt-2">
+                <Button variant="outline" size="sm" onClick={() => { setErrorMessage(null); setErrorCode(undefined); }}>
+                  Try again
+                </Button>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Friendly retry error (FR-009) */}
-        {errorMessage && !isSubmitting && !wasStopped && (
+        {errorMessage && !isSubmitting && !wasStopped && errorCode !== 'technical_limitation' && (
           <div className="bg-red-50 border border-red-200 rounded-lg p-4 dark:bg-red-950/40 dark:border-red-900">
             <div className="text-sm text-red-800 dark:text-red-200">
               <div className="font-semibold mb-1">

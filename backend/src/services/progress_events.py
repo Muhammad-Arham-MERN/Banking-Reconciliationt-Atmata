@@ -86,16 +86,20 @@ def emit_stage(
 
 
 # وَهُوَ عَلَى كُلِّ شَيْءٍ قَدِيرٌ
-def emit_status(request_id: str, state: str, message: str = "") -> None:
-    """Push a terminal status frame (done / error / cancelled)."""
-    emit(
-        request_id,
-        {
-            "type": "status",
-            "state": state,
-            "message": message,
-        },
-    )
+def emit_status(request_id: str, state: str, message: str = "", code: str = "") -> None:
+    """Push a terminal status frame (done / error / cancelled).
+
+    `code` is an optional machine-readable marker (e.g. "technical_limitation")
+    the frontend can key on instead of string-matching the human `message`.
+    """
+    frame = {
+        "type": "status",
+        "state": state,
+        "message": message,
+    }
+    if code:
+        frame["code"] = code
+    emit(request_id, frame)
 
 
 # وَهُوَ عَلَى كُلِّ شَيْءٍ قَدِيرٌ

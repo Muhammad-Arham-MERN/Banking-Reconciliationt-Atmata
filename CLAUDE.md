@@ -266,6 +266,8 @@ Automated reconciliation system that:
 - CockroachDB via raw asyncpg (`db_service`, `$n` placeholders) — this feature **reads** the existing `companies` table only; **no new tables or migrations**. Company session lives in browser `localStorage`. (010-company-dashboard-onboarding)
 - Python `>=3.13` (backend, FastAPI); TypeScript `^5` on Next.js `16.2.9` / React `19.2.4` App Router (frontend) + Backend — FastAPI, `asyncpg` (raw SQL, no ORM), pydantic v2 + pydantic-settings, PyJWT, `cryptography` (Fernet), all existing; **NEW: `resend`** (email SDK, developer-requested). Frontend — Next.js App Router (RSC), NextAuth v5 (Google; JWT session exposing `session.user.access_token`), shadcn `base-nova` on Base UI, Tailwind v4, `motion`, `lucide-react`, `@tabler/icons-react` (all existing; **no additions**). (011-company-employee-wiring)
 - CockroachDB via raw `asyncpg` (`db_service`, `$n` placeholders). **NEW table** `company_requests`; **ALTER** `employees` (add `is_manager`, add `account_user_id` index, optional FK to `users`). Company logos stay on the filesystem in `COMPANY_LOGO_DIR` (untouched). (011-company-employee-wiring)
+- Python `>=3.13` (backend, FastAPI); TypeScript `^5` on Next.js `16.2.9` / React `19.2.4` App Router (frontend) + Backend — `openai-agents[litellm]` (the `Agent`/`Runner`/`@tool` SDK the detector already uses), FastAPI, pydantic v2, pandas/pdfplumber — all existing; the **existing `resend` SDK** is reused through `notification_service.py`, so **no new package** is added. Frontend — Next.js App Router, shadcn `base-nova` on Base UI, Tailwind v4, lucide-react — all existing, **no additions**. (012-agent-limitation-email)
+- **N/A** — this feature persists nothing. The limitation report exists only as the delivered email plus log entries; there is no new table, file, or cache. (012-agent-limitation-email)
 
 - Python 3.11 (backend, FastAPI) + TypeScript/Next.js 14 (frontend, App Router) (005-ai-data-extraction)
 - `openai-agents` (OpenAI Agents SDK), `litellm` (model provider abstraction), `pdfplumber`, `pandas`/`openpyxl`, `pydantic`, `fastapi`, `python-multipart`, `asyncio` (005-ai-data-extraction)
@@ -276,4 +278,4 @@ Automated reconciliation system that:
 - 005-ai-data-extraction: Added Python 3.11 (backend, FastAPI); TypeScript/Next.js 14 (frontend, App Router)
 - 005-ai-data-extraction: Added `openai-agents` (OpenAI Agents SDK), `litellm` (model provider abstraction, already referenced in test.py), `pdfplumber` (PDF word geometry + extraction), `pandas`/`openpyxl` (Excel), `pydantic` (response parsing), `fastapi`, `python-multipart` (uploads), `asyncio` (parallel detection)
 
-**Last updated**: 2026-10-02
+**Last updated**: 2026-11-07

@@ -98,6 +98,10 @@ from src.utils.data_transformers import (
     canonicalize_date,
     parse_amount,
 )
+# Shared tolerant row assembly (baseline-jitter merge). The assessor and the
+# production extractor MUST cluster rows identically, or the assessor would
+# score a row set the pipeline does not actually reproduce.
+from src.utils.layout_rows import group_words_into_lines
 
 # Default MCB statement layout (same as test_results.py / LLM_run_check.py).
 DEFAULT_COLUMN_BOUNDARIES = [45.0, 89.0, 195.0, 246.0, 298.0, 348.0, 440.0, 500.0, 570.0]
@@ -337,16 +341,18 @@ def extract_pdf_words(
                 else {}
             )
 
-            # Group words into visual lines by their top coordinate.
-            lines: dict[float, list[dict]] = {}
+            # Filter to the band, then cluster with a vertical tolerance so a
+            # baseline-jittered row is reassembled (mirrors the production
+            # extractor exactly).
+            band_words: list[dict] = []
             for w in words:
                 top = round(w["top"], 1)
                 in_band = page_band_top is None or top >= page_band_top
                 below_header = page_header_top is None or top >= page_header_top + 4.0
                 if in_band and below_header:
-                    lines.setdefault(top, []).append(w)
+                    band_words.append(w)
 
-            ordered_lines = sorted(lines.items())
+            ordered_lines = group_words_into_lines(band_words)
 
             # Dedup is PER-PAGE (same as production).
             seen_tops: set[float] = set()
@@ -494,13 +500,14 @@ def extract_raw_rows_date_filtered(
     with pdfplumber.open(str(pdf_path)) as pdf:
         for page_index, page in enumerate(pdf.pages):
             words = page.extract_words()
-            lines: dict[float, list[dict]] = {}
-            for w in words:
-                lines.setdefault(round(w["top"], 1), []).append(w)
+            # Tolerant clustering so a baseline-jittered row counts as ONE line
+            # (otherwise Kabir sees phantom extra lines and misreports the raw
+            # dated-row count).
+            lines = group_words_into_lines(words)
 
             page_count = 0
-            for top in sorted(lines):
-                ws = sorted(lines[top], key=lambda w: w["x0"])
+            for top, ws in lines:
+                ws = sorted(ws, key=lambda w: w["x0"])
                 if not ws:
                     continue
                 # The first non-empty cell is the leftmost word of the line.
@@ -952,12 +959,9 @@ def _ihsan_page_text_tool(pdf_path: str | Path, max_pages: int = 6):
             out = []
             for p in range(from_page - 1, to_page):
                 words = pdf.pages[p].extract_words()
-                visual_lines: dict[float, list[dict]] = {}
-                for w in words:
-                    visual_lines.setdefault(round(w["top"], 1), []).append(w)
                 out.append(f"--- PAGE {p + 1} (1-based) ---")
-                for top in sorted(visual_lines):
-                    row_words = sorted(visual_lines[top], key=lambda w: w["x0"])
+                for _top, row_words in group_words_into_lines(words):
+                    row_words = sorted(row_words, key=lambda w: w["x0"])
                     out.append(" ".join(w["text"] for w in row_words))
             return "\n".join(out) if out else f"No words found on pages {from_page}-{to_page}."
 
@@ -1716,17 +1720,19 @@ def assess_pdf_structure(
             page_band_top = _per_page(band_top, page_index)
 
             words = page.extract_words()
-            lines: dict[float, list[dict]] = {}
+            band_words: list[dict] = []
             for w in words:
                 top = round(w["top"], 1)
                 in_band = page_band_top is None or top >= page_band_top
                 below_header = page_header_top is None or top >= page_header_top + 4.0
                 if in_band and below_header:
-                    lines.setdefault(top, []).append(w)
+                    band_words.append(w)
+
+            page_lines = group_words_into_lines(band_words)
 
             date_lines = sum(
                 1
-                for top, ws in lines.items()
+                for _top, ws in page_lines
                 if any(re.match(compiled, w["text"].strip()) for w in ws)
             )
             date_matching_count += date_lines
@@ -1736,7 +1742,7 @@ def assess_pdf_structure(
                     "page": page_index + 1,
                     "band_top": page_band_top,
                     "header_top": page_header_top,
-                    "in_band_lines": len(lines),
+                    "in_band_lines": len(page_lines),
                     "date_matching_lines": date_lines,
                     "row_count": per_page_rows[page_index],
                 }
@@ -2370,21 +2376,21 @@ def _extract_rows_per_page(
             )
 
             words = page.extract_words()
-            lines: dict[float, list[dict]] = {}
+            band_words: list[dict] = []
             for w in words:
                 top = round(w["top"], 1)
                 in_band = page_band_top is None or top >= page_band_top
                 below_header = page_header_top is None or top >= page_header_top + 4.0
                 if in_band and below_header:
-                    lines.setdefault(top, []).append(w)
+                    band_words.append(w)
 
             page_count_rows = 0
             seen_tops: set[float] = set()
-            for top in sorted(lines):
+            for top, line_words in group_words_into_lines(band_words):
                 if top in seen_tops:
                     continue
                 seen_tops.add(top)
-                cells = _slice_words_to_columns(lines[top], boundaries or [])
+                cells = _slice_words_to_columns(line_words, boundaries or [])
                 if not cells:
                     continue
                 if name_based:
