@@ -31,6 +31,10 @@ from src.utils.data_transformers import (
     parse_amount,
     standardize_transaction_data,
 )
+# Shared tolerant row assembly (baseline-jitter merge) used by BOTH this
+# production extractor and the structure assessor, so they measure identical
+# rows.
+from src.utils.layout_rows import group_words_into_lines
 logger = logging.getLogger(__name__)
 
 
@@ -190,8 +194,12 @@ def extract_pdf(
             # (header_top >= band_top) gets an empty map -> index-based fallback.
             slice_map = _header_slice_mapping(page, page_header_top, boundaries or [], columns)
 
-            # Group words into visual lines by their top coordinate.
-            lines: dict[float, list[dict]] = {}
+            # Filter to the transaction band, then group words into logical
+            # rows with a small vertical tolerance so a row whose cells are
+            # baseline-jittered (~0.1pt) is reassembled instead of split (its
+            # amount cells would otherwise land on a dateless phantom line and
+            # be dropped).
+            band_words: list[dict] = []
             for w in words:
                 # On the first page the data band starts after the header;
                 # on continuation pages the header repeats, so skip lines that
@@ -200,10 +208,10 @@ def extract_pdf(
                 in_band = page_band_top is None or top >= page_band_top
                 below_header = page_header_top is None or top >= page_header_top + 4.0
                 if in_band and below_header:
-                    lines.setdefault(top, []).append(w)
+                    band_words.append(w)
 
             # Ordered (top, words) pairs for the continuation-merge look-ahead.
-            ordered_lines = sorted(lines.items())
+            ordered_lines = group_words_into_lines(band_words)
 
             # Dedup is PER-PAGE: the same top coordinate can legitimately hold a
             # transaction row on page 2 even though a row occupied it on page 1

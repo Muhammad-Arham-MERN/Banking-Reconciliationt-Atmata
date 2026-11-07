@@ -29,6 +29,8 @@ export interface ReconciliationStatusFrame {
   type: 'status';
   state: 'done' | 'error' | 'cancelled';
   message: string;
+  /** Optional machine-readable marker, e.g. 'technical_limitation'. */
+  code?: string;
 }
 
 export type ReconciliationProgressFrame =

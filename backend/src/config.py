@@ -90,7 +90,17 @@ class Settings(BaseSettings):
     # Verified sender address configured in the Resend dashboard.
     RESEND_FROM_EMAIL: str = ""
     # Who receives the new-company-request notification.
-    COMPANY_REQUEST_NOTIFY_EMAIL: str = "ArhamBrowser@gmail.com"
+    COMPANY_REQUEST_NOTIFY_EMAIL: str = "arhambrowser@gmail.com"
+
+    # Agent tool-limitation reports — the extraction agent emails the Developer
+    # when it determines a reconciliation failure is caused by a limitation or
+    # defect of its own tools/engine (or that a new tool is needed). Best-effort
+    # like the notification above: an empty RESEND_API_KEY skips the send.
+    # The subject MUST begin with this prefix so the Developer's Gmail rule
+    # files the message under the "Reconciliation Atmata" label.
+    AGENT_LIMITATION_SUBJECT_PREFIX: str = "Reconciliation Atmata"
+    # Who receives agent tool-limitation reports.
+    AGENT_LIMITATION_NOTIFY_EMAIL: str = "arhambrowser@gmail.com"
 
     # AI Structure Detection (Istikhraj e Data Ma'a AI)
     # Model id (LiteLLM-prefixed, e.g. "gemini/gemini-2.0-flash") and provider
